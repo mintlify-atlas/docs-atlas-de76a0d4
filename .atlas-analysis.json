@@ -1,0 +1,208 @@
+{
+  "projectType": "data-platform",
+  "projectName": "Turso",
+  "projectDescription": "An in-process SQL database written in Rust, compatible with SQLite, with multi-language bindings, async I/O, vector search, and full-text search.",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Language Bindings",
+            "pages": [
+              "bindings/rust",
+              "bindings/javascript",
+              "bindings/python",
+              "bindings/go",
+              "bindings/java"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/transactions",
+              "features/vector-search",
+              "features/full-text-search",
+              "features/change-data-capture",
+              "features/encryption",
+              "features/journal-modes"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/shell-commands",
+              "cli/mcp-server"
+            ]
+          },
+          {
+            "group": "Extensions",
+            "pages": [
+              "extensions/overview",
+              "extensions/crypto",
+              "extensions/regexp",
+              "extensions/csv",
+              "extensions/fuzzy",
+              "extensions/ipaddr",
+              "extensions/percentile"
+            ]
+          },
+          {
+            "group": "Compatibility",
+            "pages": [
+              "compatibility/sqlite-compat",
+              "compatibility/limitations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SQL Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "sql-reference/introduction",
+              "sql-reference/data-types",
+              "sql-reference/expressions"
+            ]
+          },
+          {
+            "group": "Statements",
+            "pages": [
+              "sql-reference/statements/select",
+              "sql-reference/statements/insert",
+              "sql-reference/statements/update",
+              "sql-reference/statements/delete",
+              "sql-reference/statements/create-table",
+              "sql-reference/statements/alter-table",
+              "sql-reference/statements/drop-table",
+              "sql-reference/statements/create-index",
+              "sql-reference/statements/drop-index",
+              "sql-reference/statements/transactions",
+              "sql-reference/statements/explain"
+            ]
+          },
+          {
+            "group": "Functions",
+            "pages": [
+              "sql-reference/functions/scalar",
+              "sql-reference/functions/aggregate",
+              "sql-reference/functions/math",
+              "sql-reference/functions/date-time",
+              "sql-reference/functions/json",
+              "sql-reference/functions/vector",
+              "sql-reference/functions/window"
+            ]
+          },
+          {
+            "group": "Pragmas",
+            "pages": [
+              "sql-reference/pragmas"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "JavaScript API",
+            "pages": [
+              "api-reference/javascript/overview",
+              "api-reference/javascript/database",
+              "api-reference/javascript/statement"
+            ]
+          },
+          {
+            "group": "Rust API",
+            "pages": [
+              "api-reference/rust/overview",
+              "api-reference/rust/builder",
+              "api-reference/rust/connection",
+              "api-reference/rust/statement"
+            ]
+          },
+          {
+            "group": "C API",
+            "pages": [
+              "api-reference/c/overview",
+              "api-reference/c/connection",
+              "api-reference/c/statement",
+              "api-reference/c/wal"
+            ]
+          },
+          {
+            "group": "Python API",
+            "pages": [
+              "api-reference/python/overview",
+              "api-reference/python/connection",
+              "api-reference/python/cursor"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Internals",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "internals/overview",
+              "internals/parser",
+              "internals/query-optimizer",
+              "internals/virtual-machine",
+              "internals/storage",
+              "internals/async-io",
+              "internals/mvcc"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "SQLite-compatible SQL dialect, file format, and C API",
+    "Written in Rust for performance and safety",
+    "Multi-language bindings: Rust, JavaScript/WASM, Python, Go, Java",
+    "Asynchronous I/O with io_uring support on Linux",
+    "Vector search with multiple distance metrics (cosine, L2, dot product, Jaccard)",
+    "Full-text search powered by Tantivy",
+    "Change Data Capture (CDC) for real-time change tracking",
+    "MVCC (Multi-Version Concurrency Control) for concurrent transactions",
+    "Encryption at rest (experimental)",
+    "Built-in MCP server for AI assistant integration",
+    "Cross-platform: Linux, macOS, Windows, WebAssembly/browsers"
+  ],
+  "publicApiSurface": [
+    "tursodb (CLI shell)",
+    "Builder::new_local() / Builder::new_memory() (Rust API)",
+    "db.connect() -> Connection (Rust API)",
+    "conn.query(sql, params) (Rust API)",
+    "connect(path) -> Database (JavaScript API)",
+    "db.prepare(sql) -> Statement (JavaScript API)",
+    "stmt.get() / stmt.all() / stmt.run() (JavaScript API)",
+    "turso.connect(path) (Python API)",
+    "con.cursor() -> Cursor (Python API)",
+    "cur.execute(sql) (Python API)",
+    "sql.Open('turso', path) (Go API via database/sql)",
+    "sqlite3_open / sqlite3_prepare / sqlite3_step (C API)",
+    "vector32() / vector64() / vector_distance_cos() / vector_distance_l2() (SQL vector functions)",
+    "fts_match() / fts_score() / fts_highlight() (SQL FTS functions)",
+    "PRAGMA capture_data_changes_conn() (CDC)",
+    "PRAGMA journal_mode (WAL / MVCC mode switching)"
+  ]
+}
