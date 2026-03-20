@@ -1,0 +1,180 @@
+---
+title: "Statement"
+description: "A compiled SQL statement. Execute it, iterate over rows, and inspect column metadata."
+---
+
+A `Statement` is returned by `conn.prepare()`. It holds a compiled form of the SQL and can be executed many times with different parameter values.
+
+```rust
+let mut stmt = conn.prepare("SELECT * FROM users WHERE email = ?1").await?;
+```
+
+## `stmt.query(params)`
+
+Executes the statement and returns a `Rows` iterator.
+
+```rust
+let mut rows = stmt.query(["alice@example.org"]).await?;
+while let Some(row) = rows.next().await? {
+    println!("{:?}", row.get_value(0)?);
+}
+```
+
+<ParamField path="params" type="impl IntoParams" required>
+  Bind parameters. Pass `()` for no parameters.
+</ParamField>
+
+**Returns** `Result<Rows>`
+
+## `stmt.execute(params)`
+
+Executes the statement, discarding any result rows. Returns the number of rows affected.
+
+```rust
+let n = stmt.execute([42_i64]).await?;
+```
+
+<ParamField path="params" type="impl IntoParams" required>
+  Bind parameters.
+</ParamField>
+
+**Returns** `Result<u64>`
+
+## `stmt.query_row(params)`
+
+Executes the statement and returns the first row. Returns `Error::QueryReturnedNoRows` if the result set is empty.
+
+```rust
+let row = stmt.query_row([1_i64]).await?;
+let name: String = row.get(1)?;
+```
+
+<ParamField path="params" type="impl IntoParams" required>
+  Bind parameters.
+</ParamField>
+
+**Returns** `Result<Row>`
+
+## `stmt.reset()`
+
+Resets the statement back to its pre-execution state so it can be re-used. Called automatically by `query()` and `execute()` at the start of each execution.
+
+**Returns** `Result<()>`
+
+## Column metadata
+
+### `stmt.column_count()`
+
+Returns the number of columns in the result set.
+
+**Returns** `usize`
+
+### `stmt.column_name(idx)`
+
+Returns the name of the column at the given zero-based index. Returns `Error::Misuse` if the index is out of bounds.
+
+<ParamField path="idx" type="usize" required>
+  Zero-based column index.
+</ParamField>
+
+**Returns** `Result<String>`
+
+### `stmt.column_names()`
+
+Returns the names of all columns in the result set.
+
+**Returns** `Vec<String>`
+
+### `stmt.column_index(name)`
+
+Returns the zero-based index of the column with the given name (case-insensitive). Returns `Error::Misuse` if the name is not found.
+
+<ParamField path="name" type="&str" required>
+  Column name to look up.
+</ParamField>
+
+**Returns** `Result<usize>`
+
+### `stmt.columns()`
+
+Returns a `Vec<Column>` describing each column in the result set.
+
+**Returns** `Vec<Column>`
+
+Each `Column` has two methods:
+
+| Method | Returns | Description |
+|---|---|---|
+| `col.name()` | `&str` | Column name |
+| `col.decl_type()` | `Option<&str>` | Declared type (e.g. `"TEXT"`, `"INTEGER"`), or `None` if the column is an expression |
+
+## `Rows` — iterating results
+
+`Rows` is returned by `stmt.query()` and `conn.query()`.
+
+### `rows.next().await`
+
+Fetches the next row. Returns `Ok(None)` when the result set is exhausted.
+
+**Returns** `Result<Option<Row>>`
+
+`Rows` also exposes the same column metadata methods as `Statement`:
+`column_count()`, `column_name(idx)`, `column_names()`, `column_index(name)`, `columns()`.
+
+## `Row` — reading column values
+
+### `row.get_value(idx)`
+
+Returns the value at the given zero-based column index as a `Value` enum.
+
+<ParamField path="idx" type="usize" required>
+  Zero-based column index.
+</ParamField>
+
+**Returns** `Result<Value>`
+
+The `Value` enum variants:
+
+| Variant | Rust type | SQLite type |
+|---|---|---|
+| `Value::Null` | — | NULL |
+| `Value::Integer(i64)` | `i64` | INTEGER |
+| `Value::Real(f64)` | `f64` | REAL |
+| `Value::Text(String)` | `String` | TEXT |
+| `Value::Blob(Vec<u8>)` | `Vec<u8>` | BLOB |
+
+### `row.get::<T>(idx)`
+
+Converts the value at index `idx` directly into a Rust type `T` that implements `FromValue`.
+
+```rust
+let id: i64 = row.get(0)?;
+let name: String = row.get(1)?;
+```
+
+<ParamField path="idx" type="usize" required>
+  Zero-based column index.
+</ParamField>
+
+**Returns** `Result<T>`
+
+### `row.column_count()`
+
+Returns the number of columns in this row.
+
+**Returns** `usize`
+
+## Bind parameters (`IntoParams`)
+
+The `IntoParams` trait is implemented for:
+
+| Type | Binding mode |
+|---|---|
+| `()` | No parameters |
+| `[Value; N]` | Positional |
+| `&[Value]` | Positional |
+| `Vec<Value>` | Positional |
+| `Params::Positional(Vec<Value>)` | Positional |
+| `Params::Named(Vec<(String, Value)>)` | Named (by parameter name) |
+
+Use `params_from_iter(iter)` to build positional params from any iterator.

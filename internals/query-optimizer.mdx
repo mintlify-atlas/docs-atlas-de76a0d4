@@ -1,0 +1,154 @@
+---
+title: "Query optimizer"
+description: "How Turso's System R-style query optimizer chooses join order, access methods, and eliminates unnecessary sort operations."
+---
+
+The query optimizer lives in `core/translate/optimizer/` and runs between AST parsing and bytecode generation. It takes a `Plan` (an intermediate representation built from the AST) and rewrites it to minimize I/O and CPU cost before any bytecode is emitted.
+
+## Source files
+
+| File | Purpose |
+|------|---------|
+| `core/translate/optimizer/mod.rs` | High-level `optimize_plan()` entry point |
+| `core/translate/optimizer/access_method.rs` | Chooses the best index per table per join step |
+| `core/translate/optimizer/constraints.rs` | Extracts and classifies WHERE clause constraints |
+| `core/translate/optimizer/cost.rs` | Cost estimation: seek vs. scan, I/O model |
+| `core/translate/optimizer/cost_params.rs` | Tunable cost constants |
+| `core/translate/optimizer/join.rs` | System R dynamic programming join ordering |
+| `core/translate/optimizer/order.rs` | Determines when `ORDER BY` sort can be eliminated |
+| `core/translate/optimizer/unnest.rs` | Subquery unnesting |
+| `core/translate/optimizer/multi_index.rs` | Multi-index intersection planning |
+| `core/translate/optimizer/lift_common_subexpressions.rs` | CSE lifting |
+
+## Optimization phases
+
+The optimizer runs the following steps in order:
+
+<Steps>
+  <Step title="SQL rewriting">
+    Rewrites certain SQL expressions into simpler forms. For example, `BETWEEN a AND b` becomes two comparisons (`>= a AND <= b`). Constant conditions like `WHERE 1` are eliminated; `WHERE 0` short-circuits the entire query as trivially false.
+  </Step>
+  <Step title="Interesting order detection">
+    Checks whether the query has an `ORDER BY`, a `GROUP BY`, or both. An "interesting order" is one that can be provided naturally by the chosen access method or join order, potentially eliminating a sort step.
+  </Step>
+  <Step title="Constraint extraction">
+    Converts each conjunct in the WHERE clause into a `Constraint` object. For example, `WHERE t.x = 5` constrains table `t` on column `x` to value `5`. Cross-table predicates like `t.x = u.x` become constraints on both tables simultaneously. Each constraint is assigned an estimated selectivity.
+  </Step>
+  <Step title="Dynamic programming join ordering">
+    Uses a System R-style DP algorithm to find the lowest-cost join order and access method combination. See the section below for details.
+  </Step>
+  <Step title="Plan mutation">
+    Rewrites the `Plan`'s `join_order` and `Operation` fields to match the computed best plan. The bytecode emitter then walks this mutated plan.
+  </Step>
+</Steps>
+
+## Join ordering algorithm
+
+Turso uses a classic [IBM System R](https://www.cs.cmu.edu/~15721-f24/slides/02-Selinger-SystemR-opt.pdf) dynamic programming optimizer — the same foundational approach used by most relational databases since the 1970s.
+
+For a query with `n` tables:
+
+1. **n=1**: Find the lowest-cost access method for each single table given the query's constraints. Memoize.
+2. **n=2**: For each single-table plan, find the best way to join it with every other table. Memoize.
+3. **n=k**: For each `(k-1)`-table plan, find the best extension by one more table.
+4. **Pruning**: The literal query order is evaluated first as an upper cost bound. Any partial plan exceeding this bound is discarded. The best plan per table subset is also tracked — once a 3-table ordering is found to be optimal, all other permutations of those 3 tables are discarded.
+
+### Cost model
+
+In the absence of `ANALYZE` statistics, the optimizer uses conservative defaults:
+
+| Assumption | Value |
+|------------|-------|
+| Default table row count | 1,000,000 rows |
+| Page size | 4,096 bytes |
+| Rows per page | ~50 (80 bytes/row) |
+| Equality filter selectivity | fraction of rows matching |
+| Inequality filter selectivity | smaller fraction |
+
+The join cost formula is:
+
+```
+JOIN_COST = PAGE_IO(t1.rows) + t1.output_rows × PAGE_IO(t2.rows)
+```
+
+Example: `SELECT * FROM t1 JOIN t2 WHERE t2.foo > 10` with 6,400 rows in `t1` and 8,000 in `t2`, no indexes:
+
+```
+t1 JOIN t2: PAGE_IO(6400) + 6400 × PAGE_IO(8000)
+          = 80 + 6400 × 100 = 640,080
+
+t2 JOIN t1: PAGE_IO(8000) + (8000/4) × PAGE_IO(6400)  ← filter reduces t2 output
+          = 100 + 2000 × 80 = 160,100
+```
+
+The optimizer correctly chooses `t2 JOIN t1` because filtering `t2` first dramatically reduces the number of lookups into `t1`.
+
+### Sort elimination
+
+After finding the cheapest plan, the optimizer checks whether the best ordered plan (one that naturally produces rows in the required `ORDER BY` sequence) is cheaper than the best unordered plan plus the cost of a sort. If so, it chooses the ordered plan and eliminates the sort operation.
+
+## Access method selection
+
+For each table at each step of the join, the optimizer considers:
+
+- **Full table scan** — always available; reads every row.
+- **Rowid seek** — when a constraint on the implicit rowid allows a direct B-tree lookup.
+- **Index seek** — when one or more constraints match a declared index's key columns.
+- **Index Method** — when a custom index method (e.g., a vector index) matches the query pattern.
+
+The selected access method is recorded in the `Plan` and later translated into `OpenRead` + seek/scan opcodes by the bytecode emitter.
+
+## Index Methods integration
+
+Index Methods (Turso's extensible index interface) integrate with the optimizer via a query pattern matching system. An Index Method declares the query shape it can accelerate. The optimizer checks whether the user query is a superset of that pattern, and if so, substitutes the custom Index Method in place of a standard B-tree scan.
+
+```sql
+-- Index Method pattern:
+SELECT vector_distance_jaccard(embedding, ?) AS distance
+FROM documents
+ORDER BY distance LIMIT ?;
+
+-- Matched user query (superset):
+SELECT id, content, created_at
+FROM documents
+ORDER BY vector_distance_jaccard(embedding, ?) LIMIT 10;
+```
+
+The optimizer is conservative: if an additional `WHERE` predicate doesn't fit the Index Method's pattern, it falls back to the default plan to preserve correctness.
+
+## Inspecting optimizer decisions
+
+Use `EXPLAIN QUERY PLAN` in the `tursodb` shell to see what access method and join order the optimizer selected:
+
+```sql
+tursodb> EXPLAIN QUERY PLAN
+    SELECT u.name, o.total
+    FROM users u JOIN orders o ON u.id = o.user_id
+    WHERE o.total > 100;
+```
+
+The output shows the chosen scan/seek method for each table and the join order.
+
+To see the raw bytecode the optimizer's plan is compiled into, use `EXPLAIN`:
+
+```sql
+tursodb> EXPLAIN SELECT id FROM users WHERE id = 42;
+addr  opcode          p1  p2  p3  p4             p5  comment
+----  --------------  --  --  --  -------------  --  -------
+0     Init            0   8   0                  0   Start at 8
+1     OpenRead        0   2   0   1              0   root=2; users
+2     Integer         42  1   0                  0   r[1]=42
+3     SeekRowid       0   7   1                  0   intkey=r[1]
+4     Column          0   0   2                  0   r[2]=users.id
+5     ResultRow       2   1   0                  0   output=r[2]
+6     Halt            0   0   0                  0
+7     Goto            0   1   0                  0
+8     Transaction     0   0   0                  0
+9     Goto            0   1   0                  0
+```
+
+## Current limitations
+
+<Warning>
+Turso does not yet support `ANALYZE` or `sqlite_stat1` statistics. All row count and selectivity estimates use fixed magic constants. Once `ANALYZE` support lands, plugging real statistics into the cost model will significantly improve plan quality for skewed or irregular data distributions.
+</Warning>

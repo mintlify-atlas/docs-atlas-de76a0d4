@@ -1,122 +1,193 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Turso",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#94cb04",
+    "light": "#545454",
+    "dark": "#94cb04"
   },
-  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png",
+    "dark": "https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/tursodatabase/turso"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/tursodatabase/turso"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Language Bindings",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "bindings/rust",
+              "bindings/javascript",
+              "bindings/python",
+              "bindings/go",
+              "bindings/java"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Features",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "features/transactions",
+              "features/vector-search",
+              "features/full-text-search",
+              "features/change-data-capture",
+              "features/encryption",
+              "features/journal-modes"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "CLI",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "cli/overview",
+              "cli/shell-commands",
+              "cli/mcp-server"
+            ]
+          },
+          {
+            "group": "Extensions",
+            "pages": [
+              "extensions/overview",
+              "extensions/crypto",
+              "extensions/regexp",
+              "extensions/csv",
+              "extensions/fuzzy",
+              "extensions/ipaddr",
+              "extensions/percentile"
+            ]
+          },
+          {
+            "group": "Compatibility",
+            "pages": [
+              "compatibility/sqlite-compat",
+              "compatibility/limitations"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "SQL Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "sql-reference/introduction",
+              "sql-reference/data-types",
+              "sql-reference/expressions"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Statements",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "sql-reference/statements/select",
+              "sql-reference/statements/insert",
+              "sql-reference/statements/update",
+              "sql-reference/statements/delete",
+              "sql-reference/statements/create-table",
+              "sql-reference/statements/alter-table",
+              "sql-reference/statements/drop-table",
+              "sql-reference/statements/create-index",
+              "sql-reference/statements/drop-index",
+              "sql-reference/statements/transactions",
+              "sql-reference/statements/explain"
+            ]
+          },
+          {
+            "group": "Functions",
+            "pages": [
+              "sql-reference/functions/scalar",
+              "sql-reference/functions/aggregate",
+              "sql-reference/functions/math",
+              "sql-reference/functions/date-time",
+              "sql-reference/functions/json",
+              "sql-reference/functions/vector",
+              "sql-reference/functions/window"
+            ]
+          },
+          {
+            "group": "Pragmas",
+            "pages": [
+              "sql-reference/pragmas"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "JavaScript API",
+            "pages": [
+              "api-reference/javascript/overview",
+              "api-reference/javascript/database",
+              "api-reference/javascript/statement"
+            ]
+          },
+          {
+            "group": "Rust API",
+            "pages": [
+              "api-reference/rust/overview",
+              "api-reference/rust/builder",
+              "api-reference/rust/connection",
+              "api-reference/rust/statement"
+            ]
+          },
+          {
+            "group": "C API",
+            "pages": [
+              "api-reference/c/overview",
+              "api-reference/c/connection",
+              "api-reference/c/statement",
+              "api-reference/c/wal"
+            ]
+          },
+          {
+            "group": "Python API",
+            "pages": [
+              "api-reference/python/overview",
+              "api-reference/python/connection",
+              "api-reference/python/cursor"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Internals",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "internals/overview",
+              "internals/parser",
+              "internals/query-optimizer",
+              "internals/virtual-machine",
+              "internals/storage",
+              "internals/async-io",
+              "internals/mvcc"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,142 @@
+---
+title: "Internals overview"
+description: "High-level architecture of Turso: how SQL text flows through the parser, optimizer, bytecode VM, and storage engine."
+---
+
+Turso's architecture closely follows SQLite's but departs in one fundamental way: all I/O is asynchronous. This enables `io_uring` on Linux, cross-platform non-blocking I/O, and cloud integration (backup, replication) without blocking the execution engine.
+
+## Component pipeline
+
+Every SQL statement travels through the following pipeline before returning rows to the caller:
+
+```
+SQL text
+  │
+  ▼
+┌─────────────────────┐
+│       Parser        │  parser/src/parser.rs
+│  (lexer → AST)      │  11k LOC recursive descent
+└────────┬────────────┘
+         │  Cmd::Stmt (AST)
+         ▼
+┌─────────────────────┐
+│   Code Generator /  │  core/translate/
+│    Translator       │  AST → bytecode + optimizer
+└────────┬────────────┘
+         │  Program (bytecode)
+         ▼
+┌─────────────────────┐
+│   VDBE Bytecode     │  core/vdbe/execute.rs
+│   Virtual Machine   │  12k LOC interpreter
+└────────┬────────────┘
+         │  page reads/writes
+         ▼
+┌─────────────────────┐
+│    Storage Layer    │  core/storage/
+│  (B-tree + Pager)   │  btree.rs, pager.rs
+└────────┬────────────┘
+         │  async I/O ops
+         ▼
+┌─────────────────────┐
+│     I/O Backend     │  core/io/
+│  (io_uring / sync)  │  IOResult, Completion
+└─────────────────────┘
+```
+
+## Sequence of operations
+
+The following sequence diagram (from the Turso manual) shows a query from the CLI shell through to the VDBE:
+
+```
+cli/main ──open_file──► Database
+         ◄── Connection ─
+
+cli/main ──query(sql)──► Connection
+                              │
+                         Connection ──next()──► Parser
+                              │                (parser/src/parser.rs)
+                              │         ◄── Cmd::Stmt (AST)
+                              │
+                         Connection ──translate(stmt)──► translate/mod
+                              │                   ◄── Program (bytecode)
+                              │
+cli/main ◄── Ok(Rows { Statement }) ──
+
+cli/main ──step()──► Statement
+                          │
+                     Statement ──step()──► Program
+                                    (executes bytecode, see sqlite.org/opcode.html)
+                          │         ◄── StepResult
+cli/main ◄── StepResult ──
+```
+
+The key interfaces are:
+
+- **`sqlite3_prepare()`** equivalent — translates SQL to a bytecode `Program` (a prepared statement).
+- **`sqlite3_step()`** equivalent — advances execution of the `Program` one row at a time.
+
+## Source code map
+
+| Component | Location | Notes |
+|-----------|----------|-------|
+| SQL parser | `parser/src/parser.rs` | 11k LOC recursive descent, fork of lemon-rs |
+| Lexer | `parser/src/lexer.rs` | Keyword recognition, token types |
+| AST types | `parser/src/ast.rs` | All statement and expression nodes |
+| Translator / code generator | `core/translate/` | AST → VDBE bytecode |
+| Query optimizer | `core/translate/optimizer/` | System R-style DP join ordering |
+| VDBE instruction set | `core/vdbe/insn.rs` | All opcode definitions |
+| VDBE execution engine | `core/vdbe/execute.rs` | 12k LOC bytecode interpreter |
+| B-tree storage | `core/storage/btree.rs` | 10k LOC, SQLite-compatible format |
+| Pager | `core/storage/pager.rs` | Page management, transactions, dirty tracking |
+| Write-ahead log | `core/storage/wal.rs` | WAL frames, checkpointing |
+| Buffer pool | `core/storage/buffer_pool.rs` | In-memory page cache |
+| I/O abstraction | `core/io/` | `Completion`, `CompletionGroup`, platform backends |
+| MVCC engine | `core/mvcc/` | Experimental multi-version concurrency |
+
+## How Turso differs from SQLite
+
+The primary architectural difference is the **asynchronous I/O model**.
+
+SQLite performs all I/O synchronously: a read blocks the calling thread until the data is available. Turso instead models every I/O operation as a `Completion` object. The VDBE returns `StepResult::IO` when it needs to wait for a completion, and the caller re-enters `step()` once the I/O is done.
+
+This design:
+
+- Enables `io_uring` on Linux for high-throughput, low-latency storage access.
+- Allows cloud-backed storage (backup, sync) without threading.
+- Forces all code that touches storage to handle the "not done yet" case explicitly — which catches latent concurrency bugs.
+
+<Note>
+Turso does not use Rust `async`/`await`. Instead it implements cooperative yielding with explicit state machines and the `IOResult<T>` enum. See [Async I/O](/internals/async-io) for details.
+</Note>
+
+## High-level interface compatibility
+
+Turso exposes the same high-level API as SQLite:
+
+- The same SQL query language (aiming for full compatibility).
+- The `sqlite3_prepare()` function for compiling SQL to programs.
+- The `sqlite3_step()` function for executing programs row by row.
+- The SQLite C API (via bindings) for drop-in compatibility.
+
+## Explore individual components
+
+<Columns cols={2}>
+  <Card title="Parser" icon="code" href="/internals/parser">
+    Recursive descent SQL parser and AST.
+  </Card>
+  <Card title="Query optimizer" icon="chart-bar" href="/internals/query-optimizer">
+    System R-style join ordering and index selection.
+  </Card>
+  <Card title="Virtual machine" icon="cpu" href="/internals/virtual-machine">
+    VDBE bytecode interpreter and opcode reference.
+  </Card>
+  <Card title="Storage" icon="database" href="/internals/storage">
+    B-tree, WAL, pager, and SQLite file format.
+  </Card>
+  <Card title="Async I/O" icon="arrows-rotate" href="/internals/async-io">
+    IOResult, Completion, state machines, io_uring.
+  </Card>
+  <Card title="MVCC" icon="code-branch" href="/internals/mvcc">
+    Experimental multi-version concurrency control.
+  </Card>
+</Columns>

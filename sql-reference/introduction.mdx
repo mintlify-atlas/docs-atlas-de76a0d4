@@ -1,0 +1,101 @@
+---
+title: "SQL Reference Overview"
+description: "Turso SQL language reference — based on the SQLite SQL dialect with extensions for vectors, full-text search, custom types, and more."
+---
+
+Turso speaks the SQLite SQL dialect. If you know SQLite, you already know the core of Turso SQL. This reference documents every statement, function, expression, and pragma that Turso supports, along with Turso-specific extensions that go beyond SQLite.
+
+## Language overview
+
+Turso uses the same dynamic type system, query planner, and expression grammar as SQLite. Queries run through a bytecode virtual machine that is wire-compatible with SQLite's VDBE. Most SQLite SQL works without modification.
+
+Turso adds a small set of opt-in extensions:
+
+- **Custom types** — user-defined types with encode/decode logic, constraints, and operators (STRICT tables only)
+- **Array columns** — ordered collections of any base type
+- **Vector functions** — storage and similarity search for `F32`, `F64`, `I8`, and 1-bit vectors
+- **Full-text search** — Tantivy-powered FTS with BM25 scoring
+- **Materialized views** — live, incrementally maintained views
+- **Concurrent transactions** — optimistic MVCC via `BEGIN CONCURRENT`
+
+<Note>
+For a detailed compatibility matrix listing every statement, expression, function, PRAGMA, and C API function, see [SQLite Compatibility](/compatibility/sqlite-compat).
+</Note>
+
+## Reference sections
+
+<CardGroup cols={2}>
+  <Card title="Data types" icon="database" href="/sql-reference/data-types">
+    Storage classes, type affinity rules, STRICT tables, custom types, and array columns.
+  </Card>
+  <Card title="Expressions" icon="code" href="/sql-reference/expressions">
+    Literals, operators, CAST, CASE, pattern matching, subqueries, and NULL handling.
+  </Card>
+</CardGroup>
+
+### Statements
+
+<CardGroup cols={2}>
+  <Card title="SELECT" icon="table" href="/sql-reference/statements/select">
+    Queries, joins, aggregation, window functions, and CTEs.
+  </Card>
+  <Card title="INSERT" icon="plus" href="/sql-reference/statements/insert">
+    Inserting rows, including `INSERT OR REPLACE` and `INSERT ... ON CONFLICT`.
+  </Card>
+  <Card title="UPDATE" icon="pen" href="/sql-reference/statements/update">
+    Updating rows with optional `RETURNING` clause.
+  </Card>
+  <Card title="DELETE" icon="trash" href="/sql-reference/statements/delete">
+    Deleting rows with optional `RETURNING` clause.
+  </Card>
+  <Card title="CREATE TABLE" icon="layout-grid" href="/sql-reference/statements/create-table">
+    Table definitions, column constraints, STRICT mode, and WITHOUT ROWID.
+  </Card>
+  <Card title="ALTER TABLE" icon="pencil-ruler" href="/sql-reference/statements/alter-table">
+    Adding columns, renaming tables and columns.
+  </Card>
+  <Card title="CREATE INDEX" icon="list-ordered" href="/sql-reference/statements/create-index">
+    B-tree indexes, partial indexes, and custom index methods (FTS, vector).
+  </Card>
+  <Card title="Transactions" icon="arrow-left-right" href="/sql-reference/statements/transactions">
+    `BEGIN`, `COMMIT`, `ROLLBACK`, savepoints, and `BEGIN CONCURRENT`.
+  </Card>
+  <Card title="EXPLAIN" icon="terminal" href="/sql-reference/statements/explain">
+    Inspect the query plan and VDBE bytecode.
+  </Card>
+  <Card title="All statements" icon="book-open" href="/sql-reference/statements/select">
+    DROP TABLE, DROP INDEX, CREATE VIEW, CREATE TRIGGER, CREATE VIRTUAL TABLE, and more.
+  </Card>
+</CardGroup>
+
+### Functions
+
+<CardGroup cols={2}>
+  <Card title="Scalar functions" icon="function-square" href="/sql-reference/functions/scalar">
+    String, numeric, type, and utility functions.
+  </Card>
+  <Card title="Aggregate functions" icon="sigma" href="/sql-reference/functions/aggregate">
+    `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, and statistical functions.
+  </Card>
+  <Card title="Math functions" icon="calculator" href="/sql-reference/functions/math">
+    Trigonometric, logarithmic, rounding, and power functions.
+  </Card>
+  <Card title="Date and time functions" icon="calendar" href="/sql-reference/functions/date-time">
+    `date()`, `time()`, `datetime()`, `strftime()`, `julianday()`, `unixepoch()`.
+  </Card>
+  <Card title="JSON functions" icon="braces" href="/sql-reference/functions/json">
+    `json_extract()`, `json_set()`, `json_array()`, `json_object()`, and JSONB variants.
+  </Card>
+  <Card title="Vector functions" icon="sparkles" href="/sql-reference/functions/vector">
+    `vector32()`, `vector64()`, `vector_distance_cos()`, `vector_top_k()`, and more.
+  </Card>
+  <Card title="Window functions" icon="chart-bar" href="/sql-reference/functions/window">
+    `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `LAG`, `LEAD`, and frame-based aggregates.
+  </Card>
+</CardGroup>
+
+### Pragmas
+
+<Card title="Pragmas" icon="settings" href="/sql-reference/pragmas">
+  `PRAGMA` statements for database configuration, inspection, encryption, CDC, and more.
+</Card>

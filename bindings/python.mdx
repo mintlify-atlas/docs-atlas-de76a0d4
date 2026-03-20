@@ -1,0 +1,295 @@
+---
+title: "Python"
+description: "Use Turso Database from Python via the pyturso package, a DB-API 2.0 compatible interface."
+---
+
+<Warning>
+  Turso Database is currently in BETA. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+The `pyturso` package provides a DB-API 2.0 compatible interface for Turso Database. It is a drop-in replacement for the standard `sqlite3` module and also ships an `asyncio`-compatible variant.
+
+## Installation
+
+<Tabs>
+  <Tab title="uv">
+    ```bash
+    uv pip install pyturso
+    ```
+  </Tab>
+  <Tab title="pip">
+    ```bash
+    pip install pyturso
+    ```
+  </Tab>
+</Tabs>
+
+## Connecting to a database
+
+Import `turso` and call `turso.connect()` with a file path or `":memory:"`.
+
+<CodeGroup>
+
+```python file-based database
+import turso
+
+conn = turso.connect("my-database.db")
+```
+
+```python in-memory database
+import turso
+
+conn = turso.connect(":memory:")
+```
+
+</CodeGroup>
+
+<Tip>
+  `turso.connect()` returns a `Connection` object. The API is intentionally close to `sqlite3.connect()` from the standard library.
+</Tip>
+
+## Executing queries
+
+Create a cursor from the connection and call `cursor.execute()` to run SQL statements. For writes, call `conn.commit()` to persist changes.
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+cur = conn.cursor()
+
+# Create a table
+cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+
+# Insert rows
+cur.execute("INSERT INTO users VALUES (1, 'alice')")
+cur.execute("INSERT INTO users VALUES (2, 'bob')")
+conn.commit()
+
+# Query rows
+cur.execute("SELECT * FROM users ORDER BY id")
+rows = cur.fetchall()
+print(rows)  # [(1, 'alice'), (2, 'bob')]
+
+conn.close()
+```
+
+You can also call `execute()` directly on the connection as a shortcut:
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+conn.execute("INSERT INTO users VALUES (1, 'alice'), (2, 'bob')")
+rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+print(rows)  # [(1, 'alice'), (2, 'bob')]
+```
+
+## Prepared statements and parameter binding
+
+Use `?` placeholders and pass parameters as a sequence. The `pyturso` module uses `paramstyle = "qmark"` (positional parameters only).
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+cur = conn.cursor()
+
+cur.execute(
+    "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)"
+)
+
+# Bind parameters with a tuple
+cur.execute(
+    "INSERT INTO products (name, price) VALUES (?, ?)",
+    ("Widget", 9.99)
+)
+cur.execute(
+    "INSERT INTO products (name, price) VALUES (?, ?)",
+    ("Gadget", 19.99)
+)
+conn.commit()
+
+# Parameterized SELECT
+cur.execute("SELECT * FROM products WHERE price < ?", (15.0,))
+rows = cur.fetchall()
+print(rows)  # [(1, 'Widget', 9.99)]
+```
+
+Use `cursor.executemany()` to run a DML statement over an iterable of parameter sequences:
+
+```python
+users = [(3, 'carol'), (4, 'dave')]
+cur.executemany("INSERT INTO users VALUES (?, ?)", users)
+conn.commit()
+```
+
+## Reading results
+
+The cursor exposes three fetch methods:
+
+| Method | Returns |
+|---|---|
+| `fetchone()` | Next row as a `tuple`, or `None` |
+| `fetchmany(size)` | List of up to `size` rows |
+| `fetchall()` | All remaining rows as a list of tuples |
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+conn.execute("CREATE TABLE logs (id INTEGER, msg TEXT)")
+conn.execute("INSERT INTO logs VALUES (1, 'start'), (2, 'middle'), (3, 'end')")
+
+cur = conn.cursor()
+cur.execute("SELECT * FROM logs ORDER BY id")
+
+# Fetch one at a time
+first = cur.fetchone()
+print(first)  # (1, 'start')
+
+# Fetch remaining
+rest = cur.fetchall()
+print(rest)  # [(2, 'middle'), (3, 'end')]
+
+# Cursor is also iterable
+cur.execute("SELECT * FROM logs ORDER BY id")
+for row in cur:
+    print(row)
+```
+
+Inspect column metadata via `cursor.description`:
+
+```python
+cur.execute("SELECT id, msg FROM logs")
+column_names = [desc[0] for desc in cur.description]
+print(column_names)  # ['id', 'msg']
+```
+
+## Transactions
+
+By default, `turso.connect()` uses legacy transaction control that mirrors `sqlite3`: DML statements implicitly begin a transaction. Call `conn.commit()` to commit or `conn.rollback()` to abort.
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
+conn.execute("INSERT INTO accounts VALUES (1, 1000), (2, 500)")
+conn.commit()
+
+try:
+    conn.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+    conn.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 2")
+    conn.commit()
+    print("Transfer complete")
+except Exception as e:
+    conn.rollback()
+    print("Transfer failed:", e)
+finally:
+    conn.close()
+```
+
+The `Connection` also works as a context manager. On `__exit__` it commits on success and rolls back on exception:
+
+```python
+with turso.connect(":memory:") as conn:
+    conn.execute("CREATE TABLE t (x INTEGER)")
+    conn.execute("INSERT INTO t VALUES (42)")
+# Commits automatically here
+```
+
+## Asyncio support
+
+Use `turso.aio` for non-blocking access. The async API mirrors the synchronous one.
+
+```python
+import asyncio
+import turso.aio
+
+async def main():
+    async with turso.aio.connect(":memory:") as conn:
+        await conn.executescript("""
+            CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+            INSERT INTO users VALUES (1, 'alice'), (2, 'bob');
+        """)
+
+        cur = conn.cursor()
+        await cur.execute("SELECT COUNT(*) FROM users")
+        count = (await cur.fetchone())[0]
+        print("Users:", count)  # 2
+
+        await cur.execute("SELECT * FROM users WHERE id = ?", (1,))
+        row = await cur.fetchone()
+        print(row)  # (1, 'alice')
+
+asyncio.run(main())
+```
+
+## Error handling
+
+`pyturso` maps internal errors to the DB-API 2.0 exception hierarchy:
+
+| Exception | Cause |
+|---|---|
+| `turso.IntegrityError` | Constraint violations (UNIQUE, NOT NULL, FK) |
+| `turso.OperationalError` | Database busy, full disk, or interrupted |
+| `turso.InterfaceError` | API misuse (e.g. wrong number of parameters) |
+| `turso.DatabaseError` | General database errors |
+| `turso.ProgrammingError` | SQL syntax errors or bad cursor usage |
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)")
+conn.execute("INSERT INTO users VALUES (1, 'a@example.com')")
+conn.commit()
+
+try:
+    # Duplicate primary key
+    conn.execute("INSERT INTO users VALUES (1, 'b@example.com')")
+    conn.commit()
+except turso.IntegrityError as e:
+    print("Constraint violation:", e)
+    conn.rollback()
+except turso.OperationalError as e:
+    print("Operational error:", e)
+    conn.rollback()
+finally:
+    conn.close()
+```
+
+## Complete example
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+cur = conn.cursor()
+
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT
+    )
+""")
+
+posts = [
+    ("Hello, Turso!", "This is the first post."),
+    ("Second post", "More content here."),
+]
+cur.executemany(
+    "INSERT INTO posts (title, content) VALUES (?, ?)",
+    posts
+)
+conn.commit()
+
+cur.execute("SELECT id, title FROM posts ORDER BY id")
+for row in cur:
+    print(f"{row[0]}: {row[1]}")
+
+conn.close()
+```

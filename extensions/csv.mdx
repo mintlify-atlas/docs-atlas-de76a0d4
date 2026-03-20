@@ -1,0 +1,103 @@
+---
+title: "CSV extension"
+description: "Query CSV files and inline CSV data as SQL tables using the csv virtual table."
+---
+
+The CSV extension is a port of SQLite's [CSV virtual table](https://www.sqlite.org/csv.html). It lets you query a CSV file — or an inline CSV string — using standard SQL `SELECT` statements.
+
+## Creating a CSV virtual table
+
+Use `CREATE VIRTUAL TABLE ... USING csv(...)` to expose a CSV source as a table:
+
+```sql
+CREATE VIRTUAL TABLE temp.my_data USING csv(
+  filename = 'data.csv',
+  header = yes
+);
+
+SELECT * FROM my_data;
+```
+
+<Tip>
+  Use the `temp` schema (e.g. `temp.my_data`) so the virtual table exists only for the current session and is not persisted to disk.
+</Tip>
+
+## Parameters
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `filename` | file path | Path to the CSV file on disk. Mutually exclusive with `data`. |
+| `data` | CSV string | Inline CSV content as a string literal. Mutually exclusive with `filename`. |
+| `header` | `yes` / `no` / `true` / `false` / `on` / `off` / `1` / `0` | Whether the first row contains column names. Default: `no`. |
+| `columns` | positive integer | Number of columns to expose. Rows with fewer columns return NULL for the missing fields; extra columns in the file are ignored. |
+| `schema` | SQL CREATE TABLE statement | Custom schema string. Overrides the automatically generated column definitions. |
+
+<Note>
+  You must specify exactly one of `filename` or `data`. Providing both, or neither, is an error.
+</Note>
+
+## Column naming
+
+- When `header=yes`, column names are taken from the first row of the CSV.
+- When `header=no`, columns are named `c0`, `c1`, `c2`, … by default.
+- Provide a `schema` argument to use any column names and types you choose.
+
+## Examples
+
+### Read a CSV file with a header row
+
+```sql
+CREATE VIRTUAL TABLE temp.employees USING csv(
+  filename = '/data/employees.csv',
+  header = yes
+);
+
+SELECT name, department FROM employees WHERE department = 'Engineering';
+```
+
+### Read inline CSV data
+
+```sql
+CREATE VIRTUAL TABLE temp.scores USING csv(
+  data = 'alice,92
+bob,87
+carol,95',
+  header = no
+);
+
+SELECT c0 AS name, CAST(c1 AS INTEGER) AS score
+FROM scores
+ORDER BY score DESC;
+```
+
+### Provide a custom schema
+
+```sql
+CREATE VIRTUAL TABLE temp.products USING csv(
+  filename = 'products.csv',
+  header = no,
+  schema = 'CREATE TABLE x (id INTEGER, name TEXT, price REAL)'
+);
+
+SELECT name, price FROM products WHERE price < 20.0;
+```
+
+### Limit the number of columns
+
+```sql
+CREATE VIRTUAL TABLE temp.log_entries USING csv(
+  filename = 'access.log.csv',
+  columns = 3
+);
+
+SELECT c0 AS timestamp, c1 AS method, c2 AS path FROM log_entries;
+```
+
+## CSV format
+
+The extension uses comma (`,`) as the field delimiter and double-quote (`"`) as the quote character. Fields containing commas, newlines, or double-quotes must be enclosed in double-quotes. A literal double-quote inside a quoted field is represented by two consecutive double-quotes (`""`).
+
+## Limitations
+
+- The CSV virtual table is **read-only**. `INSERT`, `UPDATE`, and `DELETE` are not supported.
+- The extension reads the entire file on each query scan; there is no indexing.

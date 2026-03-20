@@ -1,0 +1,54 @@
+---
+title: "WAL"
+description: "libSQL WAL extension functions for inspecting the Write-Ahead Log."
+---
+
+Turso extends the SQLite C API with WAL introspection functions under the `libsql_` prefix.
+
+## `libsql_wal_frame_count`
+
+Returns the current number of frames in the WAL file.
+
+```c
+int libsql_wal_frame_count(sqlite3 *db, uint32_t *p_frame_count);
+```
+
+<ParamField path="db" type="sqlite3 *" required>
+  A valid, open database connection. Must not be `NULL`.
+</ParamField>
+<ParamField path="p_frame_count" type="uint32_t *" required>
+  Output pointer. On success, set to the number of frames currently in the WAL file.
+</ParamField>
+
+### Return values
+
+| Code | Meaning |
+|---|---|
+| `SQLITE_OK` | The frame count was written to `*p_frame_count`. |
+| `SQLITE_MISUSE` | `db` is `NULL`. |
+| `SQLITE_ERROR` | An error occurred while reading the WAL. |
+
+### Example
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+#include "sqlite3.h"
+
+void print_wal_frames(sqlite3 *db) {
+    uint32_t frame_count = 0;
+    int rc = libsql_wal_frame_count(db, &frame_count);
+    if (rc == SQLITE_OK) {
+        printf("WAL frame count: %u\n", frame_count);
+    } else {
+        fprintf(stderr, "libsql_wal_frame_count error %d: %s\n",
+                rc, sqlite3_errmsg(db));
+    }
+}
+```
+
+### Safety requirements
+
+- `db` must be a valid pointer to an open `sqlite3` connection. Passing an invalid or freed pointer is undefined behavior.
+- `p_frame_count` must be a valid pointer to a `uint32_t`. The value is only written when `SQLITE_OK` is returned.
+- The database must be running in WAL journal mode. Use `PRAGMA journal_mode = wal` to enable WAL mode before calling this function.

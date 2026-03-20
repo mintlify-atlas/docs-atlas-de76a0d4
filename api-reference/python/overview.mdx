@@ -1,0 +1,73 @@
+---
+title: "Python overview"
+description: "DB-API 2.0 compatible Python interface for Turso."
+---
+
+The `turso` Python package provides a [PEP 249 DB-API 2.0](https://peps.python.org/pep-0249/) compatible interface, closely mirroring the built-in `sqlite3` module.
+
+## Installation
+
+```bash
+pip install turso
+```
+
+## DB-API 2.0 module attributes
+
+| Attribute | Value | Meaning |
+|---|---|---|
+| `turso.apilevel` | `"2.0"` | Implements DB-API 2.0 |
+| `turso.threadsafety` | `1` | The module is thread-safe; connections are not |
+| `turso.paramstyle` | `"qmark"` | Positional `?` placeholders |
+
+## Quick start
+
+```python
+import turso
+
+# Open (or create) a database
+conn = turso.connect("app.db")
+
+# Create a table
+conn.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
+
+# Insert rows
+conn.execute("INSERT INTO users (name) VALUES (?)", ("Alice",))
+conn.execute("INSERT INTO users (name) VALUES (?)", ("Bob",))
+conn.commit()
+
+# Query rows
+cursor = conn.execute("SELECT id, name FROM users")
+for row in cursor.fetchall():
+    print(row)  # (1, 'Alice')  (2, 'Bob')
+
+conn.close()
+```
+
+## In-memory database
+
+Pass `":memory:"` to open a transient in-memory database:
+
+```python
+conn = turso.connect(":memory:")
+```
+
+## Context manager
+
+`Connection` implements the context manager protocol. A successful block commits; an exception rolls back:
+
+```python
+with turso.connect("app.db") as conn:
+    conn.execute("INSERT INTO users (name) VALUES (?)", ("Carol",))
+# Connection is committed here (no exception)
+```
+
+## Pages in this section
+
+<Columns cols={2}>
+  <Card title="Connection" href="/api-reference/python/connection" icon="link">
+    Open a database, commit or roll back transactions, and run ad-hoc SQL.
+  </Card>
+  <Card title="Cursor" href="/api-reference/python/cursor" icon="code">
+    Execute statements, bind parameters, and fetch result rows.
+  </Card>
+</Columns>

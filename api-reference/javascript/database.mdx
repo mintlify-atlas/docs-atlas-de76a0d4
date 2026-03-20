@@ -1,0 +1,155 @@
+---
+title: "Database"
+description: "The Database class represents an open connection to a Turso database file."
+---
+
+A `Database` object is returned by `connect()`. It holds the connection state and is used to prepare statements and run ad-hoc SQL.
+
+## `connect(path, options?)`
+
+Opens a connection to a database file and returns a `Database` instance.
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect('turso.db');
+const db = await connect(':memory:');
+```
+
+<ParamField path="path" type="string" required>
+  Path to the database file. Use `":memory:"` for a transient in-memory database. The file is created when it does not exist.
+</ParamField>
+
+<ParamField path="options" type="DatabaseOpts">
+  Optional configuration object.
+
+  <Expandable title="DatabaseOpts fields">
+    <ResponseField name="readonly" type="boolean">
+      Open the database in read-only mode. Defaults to `false`.
+    </ResponseField>
+    <ResponseField name="timeout" type="number">
+      Busy timeout in milliseconds. The connection will retry a locked database for up to this duration before throwing.
+    </ResponseField>
+    <ResponseField name="file_must_exist" type="boolean">
+      Throw if the database file does not already exist. Defaults to `false`.
+    </ResponseField>
+    <ResponseField name="tracing" type="string">
+      Enable internal Turso tracing at the given level: `"error"`, `"warn"`, `"info"`, `"debug"`, or `"trace"`.
+    </ResponseField>
+    <ResponseField name="experimental" type="string[]">
+      List of experimental feature flags to enable. Supported values: `"views"`, `"custom_types"`, `"encryption"`, `"index_method"`, `"attach"`, `"autovacuum"`.
+    </ResponseField>
+    <ResponseField name="encryption" type="EncryptionOpts">
+      Encryption configuration for at-rest encryption. Requires `"encryption"` in the `experimental` list.
+
+      <Expandable title="EncryptionOpts fields">
+        <ResponseField name="cipher" type="string" required>
+          Cipher name. Supported: `"aes128gcm"`, `"aes256gcm"`, `"aegis256"`, `"aegis256x2"`, `"aegis128l"`, `"aegis128x2"`, `"aegis128x4"`.
+        </ResponseField>
+        <ResponseField name="hexkey" type="string" required>
+          Hex-encoded encryption key.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `Database`
+
+## `db.prepare(sql)`
+
+Compiles a SQL statement and returns a reusable `Statement` object.
+
+```javascript
+const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+```
+
+<ParamField path="sql" type="string" required>
+  The SQL statement to compile.
+</ParamField>
+
+**Returns** `Statement` — see [Statement](/api-reference/javascript/statement) for the full method list.
+
+## `db.exec(sql)`
+
+Executes one or more SQL statements without returning rows. Useful for DDL and scripts.
+
+```javascript
+db.exec(`
+  CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+  CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT);
+`);
+```
+
+<ParamField path="sql" type="string" required>
+  One or more SQL statements separated by semicolons.
+</ParamField>
+
+**Returns** `this`
+
+## `db.close()`
+
+Closes the database connection and finalizes all outstanding prepared statements. Any further use of the `Database` or any of its `Statement` objects will throw.
+
+```javascript
+db.close();
+```
+
+**Returns** `this`
+
+## `db.last_insert_rowid()`
+
+Returns the `rowid` of the row most recently inserted by this connection.
+
+**Returns** `number`
+
+## `db.changes()`
+
+Returns the number of rows modified by the most recent INSERT, UPDATE, or DELETE statement.
+
+**Returns** `number`
+
+## `db.total_changes()`
+
+Returns the total number of rows modified since the connection was opened.
+
+**Returns** `number`
+
+## `db.defaultSafeIntegers(toggle?)`
+
+Sets the default `safeIntegers` mode for all new statements prepared on this connection. When enabled, 64-bit integers are returned as `BigInt` instead of `number`.
+
+<ParamField path="toggle" type="boolean" default="true">
+  Pass `false` to disable. Omit or pass `true` to enable.
+</ParamField>
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `readonly` | `boolean` | Whether the connection is in read-only mode. |
+| `memory` | `boolean` | Whether this is an in-memory database. |
+| `path` | `string` | File path the connection was opened with. |
+| `open` | `boolean` | Whether the connection is still open. |
+
+## Unsupported methods
+
+The following methods from the `better-sqlite3` API are **not yet implemented**:
+
+<Note>
+  These methods throw or are no-ops when called. They are listed here for
+  reference when migrating from `better-sqlite3`.
+</Note>
+
+| Method | Status |
+|---|---|
+| `db.transaction(fn)` | Not supported |
+| `db.pragma(string, options?)` | Not supported |
+| `db.backup(destination, options?)` | Not supported |
+| `db.serialize(options?)` | Not supported |
+| `db.function(name, options?, fn)` | Not supported |
+| `db.aggregate(name, options)` | Not supported |
+| `db.table(name, definition)` | Not supported |
+| `db.authorizer(rules)` | Not supported |
+| `db.loadExtension(path, entryPoint?)` | Not supported |
+| `db.interrupt()` | Not supported |

@@ -1,0 +1,115 @@
+---
+title: "Rust overview"
+description: "Async Rust API for Turso — crate, runtime requirements, and a quick start example."
+---
+
+The `turso` crate provides an async Rust API for embedding Turso in your application.
+
+## Installation
+
+Add the dependency to `Cargo.toml`:
+
+```toml
+[dependencies]
+turso = "*"
+tokio = { version = "1", features = ["full"] }
+```
+
+## Async runtime
+
+All `turso` APIs are `async`. The crate is runtime-agnostic but is tested primarily with [Tokio](https://tokio.rs/). Any `async` executor that supports `Future + Send` should work.
+
+## Quick start
+
+```rust
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    // Build a database from a local file (or ":memory:")
+    let db = Builder::new_local(":memory:").build().await?;
+
+    // Open a connection
+    let conn = db.connect()?;
+
+    // Execute DDL
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, email TEXT)",
+        (),
+    )
+    .await?;
+
+    // Insert a row
+    conn.execute(
+        "INSERT INTO users (email) VALUES (?)",
+        ["alice@example.org"],
+    )
+    .await?;
+
+    // Query rows
+    let mut rows = conn.query("SELECT id, email FROM users", ()).await?;
+    while let Some(row) = rows.next().await? {
+        let id: i64 = row.get(0)?;
+        let email: String = row.get(1)?;
+        println!("{id}: {email}");
+    }
+
+    Ok(())
+}
+```
+
+## API flow
+
+```
+Builder::new_local(path)
+  └─ .build().await  →  Database
+       └─ .connect()    →  Connection
+            ├─ .query(...)  →  Rows
+            ├─ .execute(...)  →  u64 (rows affected)
+            └─ .prepare(...)  →  Statement
+```
+
+## Optional builder features
+
+The `Builder` exposes feature flags for experimental capabilities:
+
+| Method | Description |
+|---|---|
+| `.experimental_encryption(bool)` | Enable at-rest encryption |
+| `.with_encryption(EncryptionOpts)` | Supply encryption key and cipher |
+| `.experimental_attach(bool)` | Enable `ATTACH DATABASE` |
+| `.experimental_custom_types(bool)` | Enable custom column types |
+| `.experimental_index_method(bool)` | Enable custom index methods |
+| `.experimental_materialized_views(bool)` | Enable materialized views |
+| `.with_io(vfs)` | Override the I/O backend |
+
+## Exports
+
+| Item | Kind | Description |
+|---|---|---|
+| `Builder` | struct | Constructs a `Database` |
+| `Database` | struct | Points to a database file |
+| `Connection` | struct | An open connection |
+| `Statement` | struct | A compiled statement |
+| `Rows` | struct | Query result set |
+| `Row` | struct | A single result row |
+| `Value` | enum | SQL value (`Null`, `Integer`, `Real`, `Text`, `Blob`) |
+| `Error` | enum | All error variants |
+| `Result<T>` | type alias | `std::result::Result<T, Error>` |
+| `IntoParams` | trait | Convert Rust values into bind parameters |
+
+## Pages in this section
+
+<Columns cols={2}>
+  <Card title="Builder" href="/api-reference/rust/builder" icon="hammer">
+    Construct a Database from a path or memory.
+  </Card>
+  <Card title="Connection" href="/api-reference/rust/connection" icon="link">
+    Execute queries and manage transactions.
+  </Card>
+</Columns>
+<Columns cols={2}>
+  <Card title="Statement" href="/api-reference/rust/statement" icon="code">
+    Compiled statement, row iteration, and column access.
+  </Card>
+</Columns>

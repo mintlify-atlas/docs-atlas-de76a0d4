@@ -1,0 +1,87 @@
+---
+title: "JavaScript overview"
+description: "JavaScript API for Turso — two packages covering native and serverless use cases."
+---
+
+Turso ships two JavaScript packages. Both expose the same core API, modelled after the `better-sqlite3` promise API.
+
+| Package | Use case |
+|---|---|
+| `@tursodatabase/database` | Native bindings — Node.js, Bun, Deno |
+| `@tursodatabase/serverless` | Turso Cloud (remote) databases |
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    # Native (default — prebuilt binary for your platform)
+    npm install @tursodatabase/database
+
+    # WebAssembly build
+    npm install @tursodatabase/database --cpu wasm32
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @tursodatabase/database
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @tursodatabase/database
+    ```
+  </Tab>
+</Tabs>
+
+## Quick start
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+// Open a file-backed database (created if it does not exist)
+const db = await connect('turso.db');
+
+// Execute DDL directly
+db.exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)');
+
+// Prepare and run a statement
+const stmt = db.prepare('INSERT INTO users (name) VALUES (?)');
+await stmt.run('Alice');
+
+// Query rows
+const rows = await db.prepare('SELECT * FROM users').all();
+console.log(rows); // [{ id: 1, name: 'Alice' }]
+
+db.close();
+```
+
+## Entry point: `connect(path, options?)`
+
+The `connect` function is the main entry point. It opens — and optionally creates — a database file and returns a `Database` object.
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');      // in-memory database
+const db = await connect('./app.db');      // file-backed database
+```
+
+<ParamField path="path" type="string" required>
+  Path to the SQLite database file. Pass `":memory:"` to open an in-memory database. The file is created if it does not exist.
+</ParamField>
+
+<ParamField path="options" type="DatabaseOpts">
+  Optional configuration object. See [Database](/api-reference/javascript/database) for the full list of fields.
+</ParamField>
+
+## What these classes provide
+
+<Columns cols={2}>
+  <Card title="Database" href="/api-reference/javascript/database" icon="database">
+    Represents a single connection. Prepare statements, run ad-hoc SQL, and close the connection.
+  </Card>
+  <Card title="Statement" href="/api-reference/javascript/statement" icon="code">
+    A compiled SQL statement. Bind parameters, execute, and iterate over result rows.
+  </Card>
+</Columns>

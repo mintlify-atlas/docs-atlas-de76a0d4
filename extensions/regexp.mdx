@@ -1,0 +1,100 @@
+---
+title: "Regexp extension"
+description: "Regular expression matching, substring extraction, replacement, and capture group support using RE2-compatible syntax."
+---
+
+The regexp extension adds regular expression functions to SQL. It uses the Rust `regex` crate, which implements a subset of RE2 syntax — the same syntax used by Go and RE2.
+
+<Note>
+  The regex engine does not support look-ahead, look-behind, or backreferences. It does support Unicode character classes, anchors, and most common quantifiers.
+</Note>
+
+## Functions
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `regexp(pattern, string)` | `pattern` TEXT, `string` TEXT | INTEGER (0 or 1) | Returns 1 if `string` matches `pattern`, 0 otherwise |
+| `regexp_like(string, pattern)` | `string` TEXT, `pattern` TEXT | INTEGER (0 or 1) | Same as `regexp` with arguments reversed |
+| `regexp_substr(string, pattern)` | `string` TEXT, `pattern` TEXT | TEXT or NULL | Returns the first substring of `string` matching `pattern`, or NULL if no match |
+| `regexp_replace(string, pattern, replacement)` | `string` TEXT, `pattern` TEXT, `replacement` TEXT | TEXT | Replaces the first match of `pattern` in `string` with `replacement` |
+| `regexp_capture(string, pattern [, group])` | `string` TEXT, `pattern` TEXT, `group` INTEGER | TEXT or NULL | Returns the text of capture group `group` (default 1) from the first match |
+
+## REGEXP operator
+
+Turso supports the `REGEXP` infix operator in `WHERE` clauses. It is equivalent to calling `regexp(pattern, string)`:
+
+```sql
+SELECT * FROM logs WHERE message REGEXP 'error|warning';
+```
+
+The `NOT REGEXP` form is also supported:
+
+```sql
+SELECT * FROM logs WHERE message NOT REGEXP '^debug';
+```
+
+## Examples
+
+### Check if a string matches a pattern
+
+```sql
+SELECT regexp('\d{3}-\d{4}', '555-1234');
+-- 1
+
+SELECT regexp_like('hello@example.com', '^[\w.]+@[\w.]+$');
+-- 1
+```
+
+### Extract the first match
+
+```sql
+SELECT regexp_substr('Order #12345 placed', '\d+');
+-- 12345
+```
+
+### Replace a pattern
+
+```sql
+SELECT regexp_replace('hello world', 'world', 'turso');
+-- hello turso
+```
+
+Replace with an empty string to delete a pattern:
+
+```sql
+SELECT regexp_replace('abc123def', '\d+', '');
+-- abcdef
+```
+
+### Extract a capture group
+
+```sql
+SELECT regexp_capture('2024-03-15', '(\d{4})-(\d{2})-(\d{2})', 1);
+-- 2024
+
+SELECT regexp_capture('2024-03-15', '(\d{4})-(\d{2})-(\d{2})', 2);
+-- 03
+```
+
+The default group index is 1:
+
+```sql
+SELECT regexp_capture('user:admin', '(\w+):(\w+)');
+-- user
+```
+
+### Filter rows using REGEXP
+
+```sql
+SELECT * FROM users WHERE email REGEXP '@example\.com$';
+```
+
+## NULL handling
+
+All functions return NULL when either `pattern` or `string` is not TEXT (including NULL). An invalid regex pattern also returns NULL.
+
+```sql
+SELECT regexp(NULL, 'hello');   -- NULL
+SELECT regexp('hello', NULL);   -- NULL
+SELECT regexp('[invalid', 'x'); -- NULL
+```

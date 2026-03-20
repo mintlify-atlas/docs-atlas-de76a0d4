@@ -1,0 +1,428 @@
+---
+title: "CREATE TABLE"
+description: "Create a new table in the database with column definitions, constraints, and table options."
+---
+
+Defines a new table in the database. The table name must be unique within the database schema.
+
+## Syntax
+
+```sql
+CREATE TABLE [IF NOT EXISTS] [schema_name.]table_name (
+    column_def [, column_def ...] [, table_constraint [, ...]]
+) [STRICT];
+```
+
+### Column definition
+
+```sql
+column_name [type_name] [column_constraint ...]
+```
+
+### Column constraints
+
+```sql
+PRIMARY KEY [ASC | DESC] [AUTOINCREMENT]
+NOT NULL
+UNIQUE
+DEFAULT expression
+CHECK (expression)
+REFERENCES foreign_table [(column_name)] [foreign_key_actions]
+COLLATE collation_name
+```
+
+### Table constraints
+
+```sql
+PRIMARY KEY (column_name [, ...])
+UNIQUE (column_name [, ...])
+CHECK (expression)
+FOREIGN KEY (column_name [, ...])
+    REFERENCES foreign_table (column_name [, ...])
+    [foreign_key_actions]
+```
+
+## Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `IF NOT EXISTS` | Prevents an error if a table with the same name already exists. The statement is a no-op when the table is present. |
+| `schema_name` | The name of an attached database. Defaults to the main database if omitted. |
+| `table_name` | The name of the table to create. |
+| `STRICT` | Enables strict type enforcement on the table. See [STRICT tables](#strict-tables). |
+
+## Column definitions
+
+Each column definition specifies a name, an optional type, and zero or more constraints.
+
+When no type is specified, the column accepts any storage class. When a type name is provided, it determines the column's type affinity, which influences how inserted values are stored.
+
+```sql
+CREATE TABLE measurements (
+    id INTEGER PRIMARY KEY,
+    sensor_name TEXT NOT NULL,
+    reading REAL,
+    raw_data BLOB,
+    notes          -- no type: accepts any storage class
+);
+```
+
+### Type affinity
+
+Turso (like SQLite) uses type affinity rather than strict types in non-STRICT tables. The declared type name determines affinity:
+
+| Affinity | Triggered by type names containing | Storage behavior |
+|----------|-------------------------------------|------------------|
+| `INTEGER` | `INT` | Stores integers as integers |
+| `REAL` | `REAL`, `FLOA`, `DOUB` | Stores numerics as floating point |
+| `TEXT` | `CHAR`, `CLOB`, `TEXT` | Stores values as text |
+| `BLOB` | `BLOB` or no type | Stores value as-is |
+| `NUMERIC` | anything else | Prefers integer, falls back to real or text |
+
+## Column constraints
+
+### PRIMARY KEY
+
+Designates a column as the table's primary key. A table can have at most one primary key.
+
+```sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY
+);
+```
+
+When a column is declared as `INTEGER PRIMARY KEY`, it becomes an alias for the internal `rowid`. This is the most efficient primary key form.
+
+#### AUTOINCREMENT
+
+Only valid with `INTEGER PRIMARY KEY`. Prevents the reuse of rowid values from previously deleted rows by maintaining a counter in the `sqlite_sequence` system table.
+
+```sql
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    description TEXT
+);
+```
+
+<Info>
+`AUTOINCREMENT` adds minor overhead because it updates `sqlite_sequence` on every insert. Only use it when you require strictly monotonically increasing identifiers.
+</Info>
+
+### NOT NULL
+
+Prevents the column from containing NULL values. Any `INSERT` or `UPDATE` that would set the column to NULL raises a constraint error.
+
+```sql
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    price REAL NOT NULL
+);
+```
+
+### UNIQUE
+
+Ensures all values in the column are distinct. NULL values are considered distinct from each other (multiple NULLs are allowed in a `UNIQUE` column).
+
+```sql
+CREATE TABLE accounts (
+    id INTEGER PRIMARY KEY,
+    email TEXT UNIQUE
+);
+```
+
+### DEFAULT
+
+Specifies a default value when an `INSERT` does not provide one.
+
+```sql
+CREATE TABLE orders (
+    id INTEGER PRIMARY KEY,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    quantity INTEGER DEFAULT 1
+);
+```
+
+Default expression forms:
+
+| Form | Example |
+|------|---------|
+| Literal value | `DEFAULT 42`, `DEFAULT 'active'` |
+| `NULL` | `DEFAULT NULL` |
+| `CURRENT_TIME` | Current time as `HH:MM:SS` |
+| `CURRENT_DATE` | Current date as `YYYY-MM-DD` |
+| `CURRENT_TIMESTAMP` | Current datetime as `YYYY-MM-DD HH:MM:SS` |
+| Parenthesized expression | `DEFAULT (1 + 1)`, `DEFAULT (datetime('now'))` |
+
+### CHECK
+
+Defines a boolean expression that must evaluate to true (or NULL) for every row. Can reference any column in the same row.
+
+```sql
+CREATE TABLE employees (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    age INTEGER CHECK (age >= 18),
+    salary REAL CHECK (salary > 0)
+);
+```
+
+### REFERENCES (foreign key)
+
+Establishes a foreign key relationship between a column and a column in another table.
+
+```sql
+CREATE TABLE orders (
+    id INTEGER PRIMARY KEY,
+    customer_id INTEGER REFERENCES customers(id)
+);
+```
+
+<Info>
+Foreign key enforcement is off by default. Enable it with `PRAGMA foreign_keys = ON;`.
+</Info>
+
+### COLLATE
+
+Specifies the collation sequence for text comparisons and sorting.
+
+| Collation | Description |
+|-----------|-------------|
+| `BINARY` | Compares using raw byte values (default). |
+| `NOCASE` | Case-insensitive comparison for ASCII characters. |
+| `RTRIM` | Like `BINARY` but ignores trailing spaces. |
+
+```sql
+CREATE TABLE contacts (
+    id INTEGER PRIMARY KEY,
+    name TEXT COLLATE NOCASE,
+    code TEXT COLLATE RTRIM
+);
+```
+
+## Table constraints
+
+Table constraints apply to one or more columns and are specified after all column definitions.
+
+### Composite PRIMARY KEY
+
+```sql
+CREATE TABLE enrollment (
+    student_id INTEGER,
+    course_id INTEGER,
+    semester TEXT,
+    grade REAL,
+    PRIMARY KEY (student_id, course_id, semester)
+);
+```
+
+### Composite UNIQUE
+
+```sql
+CREATE TABLE assignments (
+    employee_id INTEGER,
+    project_id INTEGER,
+    role TEXT,
+    UNIQUE (employee_id, project_id)
+);
+```
+
+### Table-level CHECK
+
+A `CHECK` constraint at the table level can reference multiple columns.
+
+```sql
+CREATE TABLE reservations (
+    id INTEGER PRIMARY KEY,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    CHECK (end_date > start_date)
+);
+```
+
+### Foreign key constraints
+
+```sql
+-- Column constraint form (single column)
+column_name type REFERENCES parent_table(parent_column)
+    [ON DELETE action] [ON UPDATE action]
+    [DEFERRABLE INITIALLY DEFERRED]
+
+-- Table constraint form (one or more columns)
+FOREIGN KEY (column_name [, ...])
+    REFERENCES parent_table(parent_column [, ...])
+    [ON DELETE action] [ON UPDATE action]
+    [DEFERRABLE INITIALLY DEFERRED]
+```
+
+Foreign key actions for `ON DELETE` and `ON UPDATE`:
+
+| Action | Description |
+|--------|-------------|
+| `NO ACTION` | Raises an error if the constraint is violated (default). |
+| `RESTRICT` | Same as `NO ACTION`, but checked immediately rather than at statement end. |
+| `CASCADE` | Deletes or updates all child rows referencing the parent row. |
+| `SET NULL` | Sets the foreign key columns in child rows to NULL. |
+| `SET DEFAULT` | Sets the foreign key columns in child rows to their default values. |
+
+```sql
+CREATE TABLE departments (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE employees (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    dept_id INTEGER,
+    manager_id INTEGER,
+    FOREIGN KEY (dept_id) REFERENCES departments(id) ON DELETE CASCADE,
+    FOREIGN KEY (manager_id) REFERENCES employees(id) ON DELETE SET NULL
+);
+```
+
+## STRICT tables
+
+STRICT tables enforce type checking at the storage layer. Every value inserted into a STRICT column must match the declared column type or be losslessly convertible to it.
+
+```sql
+CREATE TABLE sensor_data (
+    id INTEGER PRIMARY KEY,
+    reading REAL NOT NULL,
+    label TEXT,
+    payload BLOB
+) STRICT;
+```
+
+### Allowed column types in STRICT tables
+
+| Type | Description |
+|------|-------------|
+| `INTEGER` | Signed integer. |
+| `REAL` | Floating-point number. |
+| `TEXT` | UTF-8 string. |
+| `BLOB` | Raw binary data. |
+| `ANY` | Any storage class; disables type checking for this column. |
+
+Every column in a STRICT table must have an explicit type declaration.
+
+```sql
+-- This fails: STRICT tables require explicit types on every column
+CREATE TABLE bad (
+    id INTEGER PRIMARY KEY,
+    data   -- error: missing type
+) STRICT;
+```
+
+```sql
+-- This succeeds: '42' is losslessly convertible to INTEGER
+INSERT INTO inventory VALUES (1, 'WIDGET-001', '42', 9.99, 'widgets');
+
+-- This fails: 'abc' cannot be converted to INTEGER
+INSERT INTO inventory VALUES (2, 'GADGET-001', 'abc', 19.99, 'gadgets');
+-- Error: cannot store TEXT value in INTEGER column
+```
+
+<Info>
+**Turso extension**: STRICT tables in Turso also support custom types defined with `CREATE TYPE` and array types. Custom types extend the type system with user-defined encoding, decoding, validation, and operator overloading. Array columns are declared by appending `[]` to a base type.
+
+```sql
+CREATE TABLE events (
+    id uuid PRIMARY KEY,
+    name varchar(100) NOT NULL,
+    event_date date,
+    is_active boolean DEFAULT 1,
+    tags TEXT[]
+) STRICT;
+```
+
+STRICT schema mode is experimental.
+</Info>
+
+## Unsupported features
+
+The following `CREATE TABLE` features are not yet supported:
+
+| Feature | Notes |
+|---------|-------|
+| `CREATE TEMPORARY TABLE` | Temporary tables are not supported. |
+| `CREATE TABLE ... AS SELECT` | Creating a table from a query result is not supported. |
+| `WITHOUT ROWID` | WITHOUT ROWID tables are not supported. |
+| `GENERATED ALWAYS AS` | Generated (computed) columns are not supported. |
+| `ON CONFLICT` clause on column constraints | Use the `INSERT ... ON CONFLICT` (UPSERT) syntax instead. |
+
+## Examples
+
+### Basic table with constraints
+
+```sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT,
+    bio TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Table with foreign keys and CHECK constraints
+
+```sql
+CREATE TABLE orders (
+    id INTEGER PRIMARY KEY,
+    customer_id INTEGER NOT NULL,
+    total_amount REAL NOT NULL CHECK (total_amount >= 0),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'shipped', 'delivered', 'cancelled')),
+    order_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT
+);
+```
+
+### STRICT table
+
+```sql
+CREATE TABLE inventory (
+    product_id INTEGER PRIMARY KEY,
+    sku TEXT NOT NULL UNIQUE,
+    quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    price REAL NOT NULL CHECK (price > 0),
+    category TEXT NOT NULL
+) STRICT;
+```
+
+### Composite primary key with foreign keys
+
+```sql
+CREATE TABLE course_enrollment (
+    student_id INTEGER NOT NULL,
+    course_id INTEGER NOT NULL,
+    enrolled_date TEXT DEFAULT CURRENT_DATE,
+    grade REAL CHECK (grade >= 0.0 AND grade <= 4.0),
+    PRIMARY KEY (student_id, course_id),
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+);
+```
+
+### IF NOT EXISTS
+
+```sql
+-- Safe to run multiple times
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+## See also
+
+- [ALTER TABLE](/sql-reference/statements/alter-table) — modify an existing table
+- [DROP TABLE](/sql-reference/statements/drop-table) — remove a table
+- [CREATE INDEX](/sql-reference/statements/create-index) — index table columns
+- [INSERT](/sql-reference/statements/insert) — add rows to a table

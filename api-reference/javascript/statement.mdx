@@ -1,0 +1,175 @@
+---
+title: "Statement"
+description: "A compiled SQL statement returned by db.prepare()."
+---
+
+A `Statement` object holds a compiled SQL statement. It can be executed multiple times with different bound parameters without recompiling the SQL.
+
+Obtain a statement by calling `db.prepare(sql)`:
+
+```javascript
+const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+```
+
+## `stmt.run(...bindParameters)`
+
+Executes the statement and returns an info object. Primarily used for INSERT, UPDATE, and DELETE statements.
+
+```javascript
+const info = await stmt.run(42);
+console.log(info.changes);        // number of rows modified
+console.log(info.lastInsertRowid); // rowid of the last inserted row
+```
+
+<ParamField path="bindParameters" type="any[]">
+  Positional parameter values to bind. Each `?` placeholder in the SQL is replaced in order.
+</ParamField>
+
+**Returns** `{ changes: number, lastInsertRowid: number }`
+
+<ResponseField name="changes" type="number">
+  Number of rows inserted, updated, or deleted by the statement.
+</ResponseField>
+<ResponseField name="lastInsertRowid" type="number">
+  The `rowid` of the last row inserted into the database. This value is connection-scoped and reflects the most recent INSERT on the same connection, not necessarily from this statement.
+</ResponseField>
+
+## `stmt.get(...bindParameters)`
+
+Executes the statement and returns the first result row as a plain object, or `undefined` if no rows were returned.
+
+```javascript
+const user = await stmt.get(1);
+console.log(user); // { id: 1, name: 'Alice' } or undefined
+```
+
+<ParamField path="bindParameters" type="any[]">
+  Positional parameter values to bind.
+</ParamField>
+
+**Returns** `object | undefined` — a row object whose properties correspond to column names, or `undefined` when no row matches.
+
+## `stmt.all(...bindParameters)`
+
+Executes the statement and returns all result rows as an array of objects.
+
+```javascript
+const rows = await stmt.all();
+for (const row of rows) {
+  console.log(row.id, row.name);
+}
+```
+
+<ParamField path="bindParameters" type="any[]">
+  Positional parameter values to bind.
+</ParamField>
+
+**Returns** `object[]` — an array of row objects. Returns an empty array when no rows match.
+
+## `stmt.iterate(...bindParameters)`
+
+Executes the statement and returns a synchronous iterator over the result rows. Useful for processing large result sets without loading all rows into memory at once.
+
+```javascript
+const iter = stmt.iterate();
+for (const row of iter) {
+  console.log(row.id, row.name);
+}
+```
+
+<ParamField path="bindParameters" type="any[]">
+  Positional parameter values to bind.
+</ParamField>
+
+**Returns** `Iterator<object>` — an iterator that yields one row object per step.
+
+## `stmt.bind_at(index, value)`
+
+Binds a single value at a 1-based parameter index. Used when building bind parameters incrementally.
+
+<ParamField path="index" type="number" required>
+  The 1-based index of the parameter to bind.
+</ParamField>
+<ParamField path="value" type="any" required>
+  The value to bind. Accepted types: `null`, `number`, `BigInt`, `string`, `boolean`, `Buffer`, `Uint8Array`.
+</ParamField>
+
+## `stmt.parameter_count()`
+
+Returns the number of bind parameters in the statement.
+
+**Returns** `number`
+
+## `stmt.parameter_name(index)`
+
+Returns the name of the parameter at the given 1-based index, or `null` for anonymous (`?`) parameters.
+
+<ParamField path="index" type="number" required>
+  The 1-based parameter index.
+</ParamField>
+
+**Returns** `string | null`
+
+## `stmt.reset()`
+
+Resets the statement back to its initial state so it can be re-executed.
+
+## `stmt.raw(toggle?)`
+
+Switches the presentation mode to raw (array) mode. In raw mode, rows are returned as arrays rather than objects.
+
+<ParamField path="toggle" type="boolean" default="true">
+  Pass `false` to revert to expanded (object) mode.
+</ParamField>
+
+## `stmt.pluck(toggle?)`
+
+Switches the presentation mode to pluck mode. In pluck mode, only the value of the first column is returned per row.
+
+<ParamField path="toggle" type="boolean" default="true">
+  Pass `false` to revert to expanded mode.
+</ParamField>
+
+## `stmt.safeIntegers(toggle?)`
+
+Controls whether 64-bit integer columns are returned as `BigInt` (safe mode) or `number` (default).
+
+<ParamField path="toggle" type="boolean" default="true">
+  Pass `false` to disable safe integers for this statement.
+</ParamField>
+
+## `stmt.columns()`
+
+Returns an array of column descriptor objects for the result set.
+
+**Returns** `Array<{ name: string, type: string | null, column: null, table: null, database: null }>`
+
+## `stmt.finalize()`
+
+Finalizes the statement, releasing all associated resources. The statement cannot be used after this call.
+
+## Row object
+
+By default, rows are returned as plain JavaScript objects with one property per column:
+
+```javascript
+// Given: SELECT id, name FROM users
+// Row object:
+{ id: 1, name: 'Alice' }
+```
+
+Integer columns wider than 53 bits are returned as `number` by default, which may lose precision. Use `stmt.safeIntegers(true)` or `db.defaultSafeIntegers(true)` to receive them as `BigInt` instead.
+
+Blob columns are returned as `Buffer` in Node.js and as `Uint8Array` in browser/WASM environments.
+
+## Unsupported methods
+
+<Note>
+  The following `better-sqlite3` Statement methods are not yet implemented.
+</Note>
+
+| Method | Status |
+|---|---|
+| `stmt.expand(toggle?)` | Not supported |
+| `stmt.timed(toggle?)` | Not supported |
+| `stmt.bind(...bindParameters)` | Not supported |

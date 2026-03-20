@@ -1,0 +1,221 @@
+---
+title: "Installation"
+description: "Install the Turso CLI and language bindings for Rust, JavaScript, Python, Go, and Java."
+---
+
+<Warning>
+  Turso is currently in **BETA**. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+## CLI
+
+The `tursodb` CLI provides an interactive SQL shell, an MCP server mode, and database management utilities.
+
+<CodeGroup>
+  ```bash curl
+  curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
+  ```
+
+  ```bash Homebrew
+  brew install turso
+  ```
+
+  ```bash Cargo
+  cargo install turso --bin tursodb
+  ```
+</CodeGroup>
+
+Verify the installation:
+
+```bash
+tursodb --version
+```
+
+### Docker
+
+If you prefer Docker, build and run the CLI image from the repository root:
+
+```bash
+make docker-cli-build && \
+make docker-cli-run
+```
+
+---
+
+## Rust
+
+The `turso` crate provides an async Rust API built on Tokio. It is compatible with the `rusqlite` interface pattern.
+
+**Requirements:** Rust stable, Tokio runtime
+
+<CodeGroup>
+  ```bash cargo add
+  cargo add turso
+  cargo add tokio --features full
+  ```
+
+  ```toml Cargo.toml
+  [dependencies]
+  turso = "0.4.3"
+  tokio = { version = "1.0", features = ["full"] }
+  ```
+</CodeGroup>
+
+To enable cloud sync with Turso Cloud, add the `sync` feature:
+
+```toml
+[dependencies]
+turso = { version = "0.4.3", features = ["sync"] }
+tokio = { version = "1.0", features = ["full"] }
+```
+
+<Note>
+  See the [Rust binding reference](/bindings/rust) for the full API including `Builder`, `Connection`, and prepared statements.
+</Note>
+
+---
+
+## JavaScript
+
+The `@tursodatabase/database` package runs in Node.js with full TypeScript support. A WebAssembly build is available for browser environments.
+
+**Requirements:** Node.js; Linux (x86, arm64), macOS, or Windows
+
+<CodeGroup>
+  ```bash npm
+  npm install @tursodatabase/database
+  ```
+
+  ```bash pnpm
+  pnpm add @tursodatabase/database
+  ```
+
+  ```bash yarn
+  yarn add @tursodatabase/database
+  ```
+</CodeGroup>
+
+### WebAssembly (browser)
+
+For browser environments, install the WebAssembly variant:
+
+```bash
+npm install @tursodatabase/database --cpu wasm32
+```
+
+### Related packages
+
+| Package | Description |
+|---------|-------------|
+| `@tursodatabase/serverless` | Serverless driver with the same API |
+| `@tursodatabase/sync` | Bidirectional sync with Turso Cloud |
+
+<Note>
+  See the [JavaScript binding reference](/bindings/javascript) for the full API.
+</Note>
+
+---
+
+## Python
+
+The `pyturso` package provides a DB-API 2.0-compatible interface and asyncio support.
+
+**Requirements:** Python 3.8+; Linux, macOS, or Windows
+
+<CodeGroup>
+  ```bash uv
+  uv pip install pyturso
+  ```
+
+  ```bash pip
+  pip install pyturso
+  ```
+</CodeGroup>
+
+<Note>
+  See the [Python binding reference](/bindings/python) for synchronous, asyncio, and sync driver usage.
+</Note>
+
+---
+
+## Go
+
+The `tursogo` driver implements the standard `database/sql` interface. It uses [purego](https://github.com/ebitengine/purego) to call Rust functions without CGO.
+
+**Requirements:** Go 1.21+; Linux, macOS, or Windows
+
+```bash
+go get turso.tech/database/tursogo
+```
+
+Import the driver with a blank import to register the `"turso"` driver name:
+
+```go
+import (
+    "database/sql"
+    _ "turso.tech/database/tursogo"
+)
+
+conn, err := sql.Open("turso", "mydb.db")
+```
+
+<Note>
+  See the [Go binding reference](/bindings/go) for the sync driver and full API.
+</Note>
+
+---
+
+## Java
+
+Turso integrates with Java through a JDBC driver. The Maven Central artifact is `tech.turso:turso`.
+
+<Warning>
+  The Java binding has not yet been published to Maven Central. You must build the JAR locally and publish it to your local Maven repository before use.
+</Warning>
+
+### Build and publish locally
+
+```bash
+cd bindings/java
+
+# Select your platform: macos_x86, macos_arm64, windows, linux_x86
+make macos_arm64
+
+# Publish to local Maven repository
+make publish_local
+```
+
+Once published locally, add the dependency to your build file:
+
+<CodeGroup>
+  ```kotlin build.gradle.kts
+  dependencies {
+      implementation("tech.turso:turso:0.0.1-SNAPSHOT")
+  }
+  ```
+
+  ```xml pom.xml
+  <dependency>
+    <groupId>tech.turso</groupId>
+    <artifactId>turso</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+  </dependency>
+  ```
+</CodeGroup>
+
+<Note>
+  See the [Java binding reference](/bindings/java) for JDBC usage details.
+</Note>
+
+---
+
+## Platform support
+
+| Platform | CLI | Rust | JavaScript | Python | Go |
+|----------|-----|------|------------|--------|----|
+| Linux x86_64 | Yes | Yes | Yes | Yes | Yes |
+| Linux arm64 | Yes | Yes | Yes | Yes | Yes |
+| macOS | Yes | Yes | Yes | Yes | Yes |
+| Windows | Yes | Yes | Yes | Yes | Yes |
+| Browser (WASM) | — | — | Yes | — | — |

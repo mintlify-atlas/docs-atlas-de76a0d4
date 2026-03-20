@@ -1,0 +1,303 @@
+---
+title: "Aggregate Functions"
+description: "Built-in aggregate functions for computing summary values over groups of rows in Turso."
+---
+
+Aggregate functions compute a single result from a set of input rows. They are typically used with `GROUP BY`, but can also be applied to an entire table without it. All standard aggregate functions ignore NULL values (except `count(*)`). When every input is NULL, the aggregate returns NULL — except for `count()` (returns 0) and `total()` (returns 0.0).
+
+## Function Reference
+
+| Function | Return Type | Description |
+|----------|-------------|-------------|
+| `avg(X)` | REAL | Average of all non-NULL values of X |
+| `count(X)` | INTEGER | Number of rows where X is not NULL |
+| `count(*)` | INTEGER | Total number of rows in the group |
+| `group_concat(X)` | TEXT | Concatenation of non-NULL values of X, comma-separated |
+| `group_concat(X, Y)` | TEXT | Concatenation of non-NULL values of X, separated by Y |
+| `string_agg(X, Y)` | TEXT | Alias for `group_concat(X, Y)` (PostgreSQL compatibility) |
+| `max(X)` | same as X | Maximum non-NULL value of X |
+| `min(X)` | same as X | Minimum non-NULL value of X |
+| `sum(X)` | INTEGER or REAL | Sum of non-NULL values. Returns NULL if all values are NULL |
+| `total(X)` | REAL | Sum of non-NULL values. Always returns REAL; returns 0.0 if all values are NULL |
+| `array_agg(X)` | BLOB (array) | Collects all values into an array (Turso extension) |
+| `stddev(X)` | REAL | Population standard deviation (Turso extension) |
+
+---
+
+## Examples
+
+The examples below use this table:
+
+```sql
+CREATE TABLE sales (
+    id       INTEGER PRIMARY KEY,
+    region   TEXT,
+    product  TEXT,
+    amount   REAL,
+    quantity INTEGER
+);
+
+INSERT INTO sales VALUES
+    (1, 'North', 'Widget', 100.00, 5),
+    (2, 'North', 'Gadget', 250.00, 2),
+    (3, 'South', 'Widget', 150.00, 8),
+    (4, 'South', 'Gadget', NULL,   3),
+    (5, 'North', 'Widget', 200.00, NULL),
+    (6, 'South', 'Widget', 175.00, 6);
+```
+
+### avg(X)
+
+Returns the average of all non-NULL values as REAL. Returns NULL if all values are NULL.
+
+```sql
+SELECT avg(amount) FROM sales;
+-- 175.0
+
+SELECT region, avg(amount) AS avg_amount
+FROM sales
+GROUP BY region;
+```
+
+| region | avg_amount |
+|--------|------------|
+| North | 183.33... |
+| South | 162.5 |
+
+<Info>
+`avg(X)` ignores NULL values in both the sum and the count. The NULL `amount` in the South region is excluded from both numerator and denominator.
+</Info>
+
+### count(X) / count(*)
+
+`count(X)` counts rows where X is not NULL. `count(*)` counts all rows including those with NULL values.
+
+```sql
+SELECT count(*) FROM sales;       -- 6 (all rows)
+SELECT count(amount) FROM sales;  -- 5 (excludes the NULL row)
+
+SELECT region, count(*) AS total_rows, count(amount) AS non_null
+FROM sales
+GROUP BY region;
+```
+
+| region | total_rows | non_null |
+|--------|------------|----------|
+| North | 3 | 3 |
+| South | 3 | 2 |
+
+### group_concat(X) / group_concat(X, Y)
+
+Concatenates non-NULL values into a single string. Default separator is a comma. `string_agg(X, Y)` is an alias.
+
+```sql
+SELECT group_concat(product) FROM sales;
+-- 'Widget,Gadget,Widget,Gadget,Widget,Widget'
+
+SELECT group_concat(DISTINCT product) FROM sales;
+-- 'Widget,Gadget'
+
+SELECT region, group_concat(product, ' | ') AS products
+FROM sales
+GROUP BY region;
+```
+
+| region | products |
+|--------|---------|
+| North | Widget \| Gadget \| Widget |
+| South | Widget \| Gadget \| Widget |
+
+### max(X) / min(X)
+
+Return the maximum or minimum non-NULL value. Returns NULL if all values are NULL.
+
+```sql
+SELECT max(amount), min(amount) FROM sales;
+-- max: 250.0, min: 100.0
+
+SELECT region, max(amount) AS highest, min(amount) AS lowest
+FROM sales
+GROUP BY region;
+```
+
+| region | highest | lowest |
+|--------|---------|--------|
+| North | 250.0 | 100.0 |
+| South | 175.0 | 150.0 |
+
+<Info>
+When called with a single argument in aggregate context, `max(X)` and `min(X)` act as aggregate functions. When called with two or more arguments (e.g. `max(a, b, c)`), they act as [scalar functions](/sql-reference/functions/scalar).
+</Info>
+
+### sum(X) / total(X)
+
+Both return the sum of non-NULL values. They differ in return type and NULL behavior.
+
+- `sum(X)`: Returns INTEGER when all inputs are integers and no overflow occurs; otherwise REAL. Returns NULL if all values are NULL.
+- `total(X)`: Always returns REAL. Returns 0.0 if all values are NULL.
+
+```sql
+SELECT sum(amount), total(amount) FROM sales;
+-- sum: 875.0, total: 875.0
+
+SELECT sum(quantity), total(quantity) FROM sales;
+-- sum: 24 (INTEGER), total: 24.0 (REAL)
+```
+
+**Difference with all-NULL groups:**
+
+```sql
+CREATE TABLE empty_amounts (val REAL);
+INSERT INTO empty_amounts VALUES (NULL), (NULL);
+
+SELECT sum(val) FROM empty_amounts;    -- NULL
+SELECT total(val) FROM empty_amounts;  -- 0.0
+```
+
+Use `total()` when you need a numeric result even for empty or all-NULL groups:
+
+```sql
+SELECT total(amount) * 1.1 AS with_tax FROM sales;
+-- 962.5  (always a number, never NULL)
+```
+
+---
+
+## GROUP BY and HAVING
+
+```sql
+SELECT
+    region,
+    product,
+    count(*) AS order_count,
+    sum(amount) AS total_sales,
+    avg(amount) AS avg_sale
+FROM sales
+GROUP BY region, product;
+```
+
+Filter groups after aggregation with `HAVING`:
+
+```sql
+SELECT region, sum(amount) AS total_sales
+FROM sales
+WHERE amount IS NOT NULL
+GROUP BY region
+HAVING sum(amount) > 400;
+```
+
+## DISTINCT
+
+The `DISTINCT` keyword causes the aggregate to consider only unique non-NULL values:
+
+```sql
+SELECT count(DISTINCT product) FROM sales;      -- 2
+SELECT group_concat(DISTINCT product) FROM sales; -- 'Widget,Gadget'
+```
+
+## Aggregates as Window Functions
+
+All standard aggregate functions can be used with an `OVER` clause as [window functions](/sql-reference/functions/window):
+
+```sql
+SELECT
+    id,
+    region,
+    amount,
+    sum(amount)  OVER (PARTITION BY region ORDER BY id) AS running_total,
+    count(*)     OVER (PARTITION BY region)              AS region_count
+FROM sales
+ORDER BY region, id;
+```
+
+---
+
+## Turso Extensions
+
+### array_agg(X)
+
+<Info>
+`array_agg(X)` is a Turso extension and is not part of standard SQLite.
+</Info>
+
+Collects all values of X (including NULLs) into an array. Returns NULL for empty groups.
+
+```sql
+SELECT array_agg(name) FROM users;
+-- ["Alice","Bob","Charlie"]
+
+SELECT department, array_agg(name)
+FROM employees
+GROUP BY department;
+```
+
+Control ordering with a subquery:
+
+```sql
+SELECT array_agg(name)
+FROM (SELECT name FROM users ORDER BY name);
+```
+
+### stddev(X)
+
+<Info>
+`stddev(X)` is a Turso extension and is not part of standard SQLite.
+</Info>
+
+Returns the population standard deviation of all non-NULL values of X. Returns NULL if there are no non-NULL values.
+
+```sql
+SELECT stddev(amount) FROM sales;
+
+SELECT region, avg(amount) AS mean, stddev(amount) AS std_dev
+FROM sales
+GROUP BY region;
+```
+
+---
+
+## Percentile Extension
+
+The following aggregate functions are available through the **percentile** extension.
+
+<Info>
+These functions require the percentile extension. Load it with `SELECT load_extension('./percentile');` or by configuring auto-load on your connection.
+</Info>
+
+### median(X)
+
+Returns the median (middle value) of all non-NULL values of X.
+
+```sql
+SELECT median(amount) FROM sales;
+-- 175.0
+```
+
+### percentile(Y, P)
+
+Returns the P-th percentile (0.0–100.0) of all non-NULL values of Y, using linear interpolation.
+
+```sql
+SELECT percentile(amount, 50) FROM sales;  -- 50th percentile (median)
+SELECT percentile(amount, 90) FROM sales;  -- 90th percentile
+SELECT percentile(amount, 25) FROM sales;  -- Q1
+```
+
+### percentile_cont(Y, P) / percentile_disc(Y, P)
+
+SQL-standard percentile functions. `percentile_cont` uses continuous (interpolated) distribution. `percentile_disc` returns the nearest discrete input value.
+
+<Info>
+Note the range difference: `percentile(Y, P)` takes P from 0 to 100, while `percentile_cont` and `percentile_disc` take P from 0.0 to 1.0.
+</Info>
+
+```sql
+SELECT percentile_cont(amount, 0.5) FROM sales;  -- interpolated median
+SELECT percentile_disc(amount, 0.5) FROM sales;  -- discrete median
+```
+
+## See Also
+
+- [Scalar Functions](/sql-reference/functions/scalar) — per-row functions
+- [Window Functions](/sql-reference/functions/window) — running and partitioned calculations
+- [SELECT](/sql-reference/statements/select) — GROUP BY, HAVING, and window function syntax

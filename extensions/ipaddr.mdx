@@ -1,0 +1,91 @@
+---
+title: "IP address extension"
+description: "Parse and inspect IPv4 and IPv6 addresses and CIDR network ranges with ipcontains, ipfamily, iphost, ipmasklen, and ipnetwork."
+---
+
+The IP address extension provides scalar functions for working with IPv4 and IPv6 addresses and CIDR notation network ranges. All functions accept address strings in standard notation.
+
+## Functions
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `ipcontains(network, address)` | `network` CIDR TEXT, `address` IP TEXT | INTEGER (0 or 1) | Returns 1 if `address` falls within the `network` range, 0 otherwise |
+| `ipfamily(address)` | `address` IP TEXT | INTEGER (4 or 6) | Returns 4 for IPv4 addresses and 6 for IPv6 addresses |
+| `iphost(cidr)` | `cidr` CIDR or IP TEXT | TEXT | Returns the host (IP) portion of a CIDR address, stripping the prefix length |
+| `ipmasklen(cidr)` | `cidr` CIDR TEXT | INTEGER | Returns the prefix length (mask bits) of a CIDR address |
+| `ipnetwork(cidr)` | `cidr` CIDR TEXT | TEXT | Returns the network address in canonical `address/prefix` notation |
+
+<Note>
+  All functions return an error value when the input cannot be parsed as a valid IP address or CIDR range.
+</Note>
+
+## Examples
+
+### Check if an IP is in a subnet
+
+```sql
+SELECT ipcontains('192.168.1.0/24', '192.168.1.100');
+-- 1
+
+SELECT ipcontains('192.168.1.0/24', '10.0.0.1');
+-- 0
+
+-- IPv6
+SELECT ipcontains('2001:db8::/32', '2001:db8::1');
+-- 1
+```
+
+### Determine address family
+
+```sql
+SELECT ipfamily('192.168.1.1');
+-- 4
+
+SELECT ipfamily('::1');
+-- 6
+```
+
+### Extract the host portion from a CIDR
+
+```sql
+SELECT iphost('192.168.1.42/24');
+-- 192.168.1.42
+
+SELECT iphost('10.0.0.1');
+-- 10.0.0.1
+```
+
+### Get the prefix length
+
+```sql
+SELECT ipmasklen('192.168.1.0/24');
+-- 24
+
+SELECT ipmasklen('10.0.0.0/8');
+-- 8
+```
+
+### Get the canonical network address
+
+```sql
+SELECT ipnetwork('192.168.1.42/24');
+-- 192.168.1.0/24
+
+SELECT ipnetwork('2001:db8::1/32');
+-- 2001:db8::/32
+```
+
+### Filter rows by subnet
+
+```sql
+SELECT * FROM connections
+WHERE ipcontains('10.0.0.0/8', client_ip) = 1;
+```
+
+### Group addresses by network family
+
+```sql
+SELECT ipfamily(ip_address) AS family, COUNT(*) AS count
+FROM servers
+GROUP BY family;
+```

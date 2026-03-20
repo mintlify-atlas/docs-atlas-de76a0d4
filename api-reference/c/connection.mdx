@@ -1,0 +1,108 @@
+---
+title: "Connection"
+description: "Open, close, and inspect a Turso database connection via the SQLite C API."
+---
+
+## `sqlite3_open`
+
+Opens a connection to a database file. If the file does not exist it is created.
+
+```c
+int sqlite3_open(const char *filename, sqlite3 **db_out);
+```
+
+<ParamField path="filename" type="const char *" required>
+  Path to the database file. Pass `":memory:"` to open an in-memory database.
+</ParamField>
+<ParamField path="db_out" type="sqlite3 **" required>
+  Output pointer that receives the database connection handle. Always set, even on error — call `sqlite3_close()` to release it.
+</ParamField>
+
+**Returns** `SQLITE_OK` on success, or an error code. Call `sqlite3_errmsg()` for a description of the error.
+
+```c
+sqlite3 *db;
+if (sqlite3_open("app.db", &db) != SQLITE_OK) {
+    fprintf(stderr, "Error: %s\n", sqlite3_errmsg(db));
+    sqlite3_close(db);
+    return 1;
+}
+```
+
+## `sqlite3_open_v2`
+
+Like `sqlite3_open`, but accepts flags and a VFS name.
+
+```c
+int sqlite3_open_v2(
+    const char *filename,
+    sqlite3   **db_out,
+    int         flags,
+    const char *z_vfs
+);
+```
+
+<ParamField path="filename" type="const char *" required>
+  Path to the database file or `":memory:"`.
+</ParamField>
+<ParamField path="db_out" type="sqlite3 **" required>
+  Output pointer for the connection handle.
+</ParamField>
+<ParamField path="flags" type="int" required>
+  Open mode flags. The `_flags` parameter is accepted but currently treated as advisory — Turso opens the database according to its own defaults.
+</ParamField>
+<ParamField path="z_vfs" type="const char *">
+  Name of the VFS to use, or `NULL` for the default.
+</ParamField>
+
+**Returns** `int` — `SQLITE_OK` on success.
+
+## `sqlite3_close`
+
+Closes a database connection and releases all associated resources. All prepared statements must be finalized before calling this function.
+
+```c
+int sqlite3_close(sqlite3 *db);
+```
+
+<ParamField path="db" type="sqlite3 *" required>
+  The database connection to close.
+</ParamField>
+
+**Returns** `SQLITE_OK`, or `SQLITE_BUSY` if there are unfinalized statements.
+
+```c
+sqlite3_close(db);
+```
+
+## `sqlite3_errmsg`
+
+Returns a human-readable description of the most recent error on the connection.
+
+```c
+const char *sqlite3_errmsg(sqlite3 *db);
+```
+
+<ParamField path="db" type="sqlite3 *" required>
+  The database connection.
+</ParamField>
+
+**Returns** `const char *` — a null-terminated UTF-8 string. The pointer is valid until the next API call on `db`.
+
+```c
+fprintf(stderr, "Error: %s\n", sqlite3_errmsg(db));
+```
+
+## `sqlite3_errcode`
+
+Returns the numeric error code of the most recent error on the connection.
+
+```c
+int sqlite3_errcode(sqlite3 *db);
+```
+
+<ParamField path="db" type="sqlite3 *" required>
+  The database connection.
+</ParamField>
+
+**Returns** `int` — one of the `SQLITE_*` result code constants.

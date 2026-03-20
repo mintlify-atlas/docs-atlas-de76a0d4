@@ -1,0 +1,366 @@
+---
+title: "Rust"
+description: "Use Turso Database from Rust with async/await support via the turso crate."
+---
+
+<Warning>
+  Turso Database is currently in BETA. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+The `turso` crate provides a native async Rust API for Turso Database. The interface is similar to `rusqlite` but uses async/await throughout, backed by Tokio.
+
+## Installation
+
+Add the following to your `Cargo.toml`:
+
+```toml
+[dependencies]
+turso = "0.4.3"
+tokio = { version = "1.0", features = ["full"] }
+```
+
+To enable cloud sync with Turso Cloud, add the `sync` feature:
+
+```toml
+[dependencies]
+turso = { version = "0.4.3", features = ["sync"] }
+tokio = { version = "1.0", features = ["full"] }
+```
+
+Or install with Cargo:
+
+```bash
+cargo add turso
+cargo add tokio --features full
+```
+
+## Connecting to a database
+
+Use `Builder::new_local()` to open a file-based or in-memory database.
+
+<CodeGroup>
+
+```rust file-based database
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local("my-database.db").build().await?;
+    let conn = db.connect()?;
+    // conn is ready to use
+    Ok(())
+}
+```
+
+```rust in-memory database
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+    // conn is ready to use
+    Ok(())
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  Pass `":memory:"` to `Builder::new_local()` to create a transient in-memory database. The database is discarded when the process exits.
+</Tip>
+
+## Executing queries
+
+`Connection::execute()` runs a statement that does not return rows and returns the number of rows affected. `Connection::query()` runs a statement and returns a `Rows` iterator.
+
+```rust
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+
+    // Create a table
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
+        ()
+    ).await?;
+
+    // Insert rows
+    let rows_affected = conn.execute(
+        "INSERT INTO users (name, email) VALUES (?1, ?2)",
+        ["Alice", "alice@example.com"]
+    ).await?;
+
+    println!("Inserted {} row(s)", rows_affected);
+
+    // Query rows
+    let mut rows = conn.query("SELECT * FROM users", ()).await?;
+    while let Some(row) = rows.next().await? {
+        let id = row.get_value(0)?;
+        let name = row.get_value(1)?;
+        let email = row.get_value(2)?;
+        println!(
+            "id={}, name={}, email={}",
+            id.as_integer().unwrap_or(&0),
+            name.as_text().unwrap_or(&"".to_string()),
+            email.as_text().unwrap_or(&"".to_string())
+        );
+    }
+
+    Ok(())
+}
+```
+
+## Prepared statements
+
+Call `Connection::prepare()` to prepare a statement for repeated execution. Prepared statements can be queried with `Statement::query()` or executed with `Statement::execute()`.
+
+```rust
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)",
+        ()
+    ).await?;
+
+    // Prepare an insert statement
+    let mut insert = conn.prepare(
+        "INSERT INTO users (name, email) VALUES (?1, ?2)"
+    ).await?;
+
+    // Execute it multiple times
+    insert.execute(["Alice", "alice@example.com"]).await?;
+    insert.execute(["Bob", "bob@example.com"]).await?;
+
+    // Prepare a select statement
+    let mut select = conn.prepare(
+        "SELECT * FROM users WHERE id = ?1"
+    ).await?;
+
+    let mut rows = select.query([1]).await?;
+    if let Some(row) = rows.next().await? {
+        println!("Found: {:?}", row.get_value(1)?);
+    }
+
+    Ok(())
+}
+```
+
+## Parameter binding
+
+Parameters are bound positionally using `?1`, `?2`, etc. Pass values as a slice, array, or tuple.
+
+```rust
+use turso::{Builder, Value, params::Params};
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+
+    conn.execute(
+        "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)",
+        ()
+    ).await?;
+
+    // Array binding
+    conn.execute(
+        "INSERT INTO products (name, price) VALUES (?1, ?2)",
+        ["Widget", "9.99"]
+    ).await?;
+
+    // Positional Params with typed Values
+    conn.execute(
+        "INSERT INTO products (name, price) VALUES (?1, ?2)",
+        Params::Positional(vec![
+            Value::Text("Gadget".to_string()),
+            Value::Real(19.99),
+        ])
+    ).await?;
+
+    Ok(())
+}
+```
+
+## Reading results
+
+Iterate over rows with `Rows::next()`. Access column values by zero-based index using `Row::get_value()` which returns a `Value` enum, or use `Row::get::<T>()` to convert directly to a Rust type.
+
+```rust
+use turso::{Builder, Value};
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+
+    conn.execute(
+        "CREATE TABLE users (id INTEGER, name TEXT, score REAL)",
+        ()
+    ).await?;
+    conn.execute(
+        "INSERT INTO users VALUES (1, 'Alice', 98.5)",
+        ()
+    ).await?;
+
+    let mut rows = conn.query("SELECT id, name, score FROM users", ()).await?;
+
+    // Inspect column metadata
+    println!("Columns: {:?}", rows.column_names());
+
+    while let Some(row) = rows.next().await? {
+        // Using get_value() — returns turso::Value
+        let id = row.get_value(0)?;
+        let name = row.get_value(1)?;
+
+        // Using get::<T>() — converts to Rust type
+        let score: f64 = row.get(2)?;
+
+        match (&id, &name) {
+            (Value::Integer(i), Value::Text(s)) => {
+                println!("id={}, name={}, score={}", i, s, score);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Transactions
+
+Use `Connection::transaction()` to begin a transaction. It takes a `&mut Connection` to prevent accidental nesting at compile time. Call `Transaction::commit()` to commit or `Transaction::rollback()` to abort. Transactions roll back automatically when dropped.
+
+```rust
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let mut conn = db.connect()?;
+
+    conn.execute(
+        "CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)",
+        ()
+    ).await?;
+    conn.execute("INSERT INTO accounts VALUES (1, 1000)", ()).await?;
+    conn.execute("INSERT INTO accounts VALUES (2, 500)", ()).await?;
+
+    // Begin a transaction
+    let tx = conn.transaction().await?;
+
+    tx.execute(
+        "UPDATE accounts SET balance = balance - 100 WHERE id = 1",
+        ()
+    ).await?;
+    tx.execute(
+        "UPDATE accounts SET balance = balance + 100 WHERE id = 2",
+        ()
+    ).await?;
+
+    // Commit the transaction
+    tx.commit().await?;
+
+    println!("Transfer complete");
+    Ok(())
+}
+```
+
+For cases where `&mut Connection` is unavailable (e.g. inside `Arc`), use `Connection::unchecked_transaction()`:
+
+```rust
+let tx = conn.unchecked_transaction().await?;
+tx.execute("INSERT INTO logs (msg) VALUES (?1)", ["event"]).await?;
+tx.commit().await?;
+```
+
+## Error handling
+
+All async methods return `turso::Result<T>`, which is an alias for `Result<T, turso::Error>`. The `Error` enum covers all database error conditions.
+
+```rust
+use turso::{Builder, Error};
+
+#[tokio::main]
+async fn main() {
+    let db = Builder::new_local(":memory:").build().await.unwrap();
+    let conn = db.connect().unwrap();
+
+    match conn.execute("INSERT INTO nonexistent VALUES (1)", ()).await {
+        Ok(n) => println!("Inserted {} row(s)", n),
+        Err(Error::Error(msg)) => eprintln!("SQL error: {}", msg),
+        Err(Error::Busy(msg)) => eprintln!("Database busy: {}", msg),
+        Err(Error::Constraint(msg)) => eprintln!("Constraint violation: {}", msg),
+        Err(e) => eprintln!("Other error: {}", e),
+    }
+}
+```
+
+### Error variants
+
+| Variant | Description |
+|---|---|
+| `Error::Error(String)` | General SQL execution error |
+| `Error::Busy(String)` | Database is locked by another connection |
+| `Error::BusySnapshot(String)` | Snapshot is busy (MVCC) |
+| `Error::Constraint(String)` | Constraint violation (UNIQUE, NOT NULL, etc.) |
+| `Error::Readonly(String)` | Attempt to write to a read-only database |
+| `Error::Misuse(String)` | Incorrect API usage |
+| `Error::Corrupt(String)` | Database file corruption detected |
+| `Error::IoError(ErrorKind, &str)` | Underlying I/O error |
+| `Error::QueryReturnedNoRows` | `query_row()` found no matching row |
+
+## Complete example
+
+```rust
+use turso::Builder;
+
+#[tokio::main]
+async fn main() -> turso::Result<()> {
+    let db = Builder::new_local(":memory:").build().await?;
+    let conn = db.connect()?;
+
+    conn.execute(
+        r#"CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        (),
+    )
+    .await?;
+
+    let mut insert = conn
+        .prepare("INSERT INTO posts (title, content) VALUES (?1, ?2)")
+        .await?;
+
+    insert
+        .execute(["Hello, Turso!", "This is the first post."])
+        .await?;
+    insert
+        .execute(["Second post", "More content here."])
+        .await?;
+
+    let mut rows = conn
+        .query("SELECT id, title FROM posts ORDER BY id", ())
+        .await?;
+
+    while let Some(row) = rows.next().await? {
+        let id: i64 = row.get(0)?;
+        let title: String = row.get(1)?;
+        println!("{}: {}", id, title);
+    }
+
+    Ok(())
+}
+```

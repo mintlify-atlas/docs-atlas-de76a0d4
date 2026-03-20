@@ -1,0 +1,365 @@
+---
+title: "Java"
+description: "Use Turso Database from Java via the JDBC driver."
+---
+
+<Warning>
+  Turso Database is currently in BETA. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+Turso provides a JDBC driver that integrates with standard Java `java.sql` interfaces. You can use it anywhere a JDBC driver is accepted.
+
+<Warning>
+  The Java binding is not yet published to Maven Central. You must build the JAR locally and publish it to your local Maven repository before use. See the [build instructions](#building-locally) below.
+</Warning>
+
+## Building locally
+
+The driver must be built from source and published to your local Maven repository.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/tursodatabase/turso
+    cd turso/bindings/java
+    ```
+  </Step>
+  <Step title="Build the native library">
+    Select the target that matches your platform:
+
+    ```bash
+    # macOS Apple Silicon
+    make macos_arm64
+
+    # macOS Intel
+    make macos_x86
+
+    # Linux x86-64
+    make linux_x86
+
+    # Windows
+    make windows
+    ```
+  </Step>
+  <Step title="Publish to local Maven">
+    ```bash
+    make publish_local
+    ```
+  </Step>
+</Steps>
+
+## Installation
+
+After publishing locally, add the dependency to your build file.
+
+<Tabs>
+  <Tab title="Gradle (Kotlin)">
+    ```kotlin
+    repositories {
+        mavenLocal()
+    }
+
+    dependencies {
+        implementation("tech.turso:turso:0.0.1-SNAPSHOT")
+    }
+    ```
+  </Tab>
+  <Tab title="Gradle (Groovy)">
+    ```groovy
+    repositories {
+        mavenLocal()
+    }
+
+    dependencies {
+        implementation 'tech.turso:turso:0.0.1-SNAPSHOT'
+    }
+    ```
+  </Tab>
+  <Tab title="Maven">
+    ```xml
+    <dependency>
+        <groupId>tech.turso</groupId>
+        <artifactId>turso</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </dependency>
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Group ID: `tech.turso` — Artifact ID: `turso`
+</Note>
+
+## Connecting to a database
+
+The Turso JDBC driver registers itself automatically when the class is loaded. Use `DriverManager.getConnection()` with a URL of the form `jdbc:turso:<path>`.
+
+<CodeGroup>
+
+```java file-based database
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso:sample.db")) {
+            // conn is ready to use
+        }
+    }
+}
+```
+
+```java in-memory database
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso::memory:")) {
+            // conn is ready to use
+        }
+    }
+}
+```
+
+</CodeGroup>
+
+<Note>
+  The JDBC URL prefix is `jdbc:turso:`. Everything after the prefix is treated as the database file path. Use `":memory:"` for an in-memory database.
+</Note>
+
+## Executing queries
+
+Create a `Statement` from the connection and call `execute()`, `executeUpdate()`, or `executeQuery()`.
+
+```java
+import java.sql.*;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso:sample.db")) {
+            try (Statement stmt = conn.createStatement(
+                    ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY,
+                    ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+
+                // DDL
+                stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT)");
+
+                // DML
+                stmt.execute("INSERT INTO users VALUES (1, 'alice')");
+                stmt.execute("INSERT INTO users VALUES (2, 'bob')");
+
+                // Query
+                stmt.execute("SELECT * FROM users");
+                ResultSet rs = stmt.getResultSet();
+                while (rs.next()) {
+                    System.out.println(
+                        "id=" + rs.getInt(1) + ", username=" + rs.getString(2)
+                    );
+                }
+            }
+        }
+    }
+}
+```
+
+## Prepared statements
+
+Use `Connection.prepareStatement()` to compile a SQL string with `?` placeholders and execute it multiple times with different parameters.
+
+```java
+import java.sql.*;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso::memory:")) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)");
+            }
+
+            String sql = "INSERT INTO products (name, price) VALUES (?, ?)";
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setString(1, "Widget");
+                pstmt.setDouble(2, 9.99);
+                pstmt.executeUpdate();
+
+                pstmt.setString(1, "Gadget");
+                pstmt.setDouble(2, 19.99);
+                pstmt.executeUpdate();
+            }
+
+            String query = "SELECT * FROM products WHERE price < ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(query)) {
+                pstmt.setDouble(1, 15.0);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        System.out.println(rs.getString("name") + " — $" + rs.getDouble("price"));
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Parameter binding
+
+`PreparedStatement` setter methods map Java types to SQL types:
+
+| Method | SQL type |
+|---|---|
+| `setInt(index, value)` | INTEGER |
+| `setLong(index, value)` | INTEGER |
+| `setDouble(index, value)` | REAL |
+| `setString(index, value)` | TEXT |
+| `setBytes(index, value)` | BLOB |
+| `setNull(index, sqlType)` | NULL |
+
+Parameter indexes are 1-based.
+
+## Reading results
+
+Use a `ResultSet` to iterate over query results. Columns can be accessed by index (1-based) or by name.
+
+```java
+import java.sql.*;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso::memory:")) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE logs (id INTEGER, msg TEXT)");
+                stmt.execute("INSERT INTO logs VALUES (1, 'start'), (2, 'stop')");
+            }
+
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT id, msg FROM logs ORDER BY id")) {
+
+                // Inspect column metadata
+                ResultSetMetaData meta = rs.getMetaData();
+                System.out.println("Columns: " + meta.getColumnCount());
+                for (int i = 1; i <= meta.getColumnCount(); i++) {
+                    System.out.println("  " + meta.getColumnName(i) + " (" + meta.getColumnTypeName(i) + ")");
+                }
+
+                while (rs.next()) {
+                    // Access by index (1-based)
+                    int id = rs.getInt(1);
+                    // Access by name
+                    String msg = rs.getString("msg");
+                    System.out.println(id + ": " + msg);
+                }
+            }
+        }
+    }
+}
+```
+
+## Transactions
+
+Disable auto-commit to group statements into a transaction. Call `commit()` to persist or `rollback()` to abort.
+
+```java
+import java.sql.*;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso::memory:")) {
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)");
+                stmt.execute("INSERT INTO accounts VALUES (1, 1000), (2, 500)");
+            }
+
+            conn.setAutoCommit(false);
+
+            try {
+                try (PreparedStatement debit = conn.prepareStatement(
+                        "UPDATE accounts SET balance = balance - ? WHERE id = ?");
+                     PreparedStatement credit = conn.prepareStatement(
+                        "UPDATE accounts SET balance = balance + ? WHERE id = ?")) {
+
+                    debit.setInt(1, 100);
+                    debit.setInt(2, 1);
+                    debit.executeUpdate();
+
+                    credit.setInt(1, 100);
+                    credit.setInt(2, 2);
+                    credit.executeUpdate();
+                }
+
+                conn.commit();
+                System.out.println("Transfer complete");
+            } catch (SQLException e) {
+                conn.rollback();
+                System.err.println("Transfer failed: " + e.getMessage());
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+}
+```
+
+## Error handling
+
+The driver throws `java.sql.SQLException` on all database errors. Use the standard JDBC exception handling pattern:
+
+```java
+try {
+    stmt.execute("INSERT INTO users VALUES (1, 'duplicate')");
+} catch (SQLException e) {
+    System.err.println("SQL error: " + e.getMessage());
+    System.err.println("Error code: " + e.getErrorCode());
+    System.err.println("SQL state: " + e.getSQLState());
+}
+```
+
+## Complete example
+
+```java
+import java.sql.*;
+
+public class Example {
+    public static void main(String[] args) throws SQLException {
+        try (Connection conn = DriverManager.getConnection("jdbc:turso:sample.db")) {
+
+            // Create table
+            try (Statement stmt = conn.createStatement(
+                    ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY,
+                    ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+                stmt.execute(
+                    "CREATE TABLE IF NOT EXISTS users (id INT PRIMARY KEY, username TEXT)"
+                );
+            }
+
+            // Insert with prepared statement
+            try (PreparedStatement insert = conn.prepareStatement(
+                    "INSERT INTO users VALUES (?, ?)")) {
+                insert.setInt(1, 1);
+                insert.setString(2, "alice");
+                insert.executeUpdate();
+
+                insert.setInt(1, 2);
+                insert.setString(2, "bob");
+                insert.executeUpdate();
+            }
+
+            // Query
+            try (Statement stmt = conn.createStatement(
+                    ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_READ_ONLY,
+                    ResultSet.CLOSE_CURSORS_AT_COMMIT)) {
+                stmt.execute("SELECT * FROM users");
+                ResultSet rs = stmt.getResultSet();
+                System.out.println(
+                    rs.getInt(1) + ", " + rs.getString(2)
+                );
+            }
+        }
+    }
+}
+```

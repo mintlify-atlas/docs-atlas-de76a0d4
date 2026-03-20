@@ -1,0 +1,240 @@
+---
+title: "Limitations"
+description: "Known limitations in Turso compared to SQLite, including general constraints, MVCC restrictions, and journaling mode support."
+---
+
+Turso aims towards full SQLite compatibility, but there are known limitations. This page documents all current constraints so you can plan accordingly.
+
+<Warning>
+Some limitations listed here apply only to experimental features (MVCC, triggers, views). Stable WAL-mode operation is unaffected by experimental-only restrictions.
+</Warning>
+
+---
+
+## General Limitations
+
+The following limitations apply to all Turso databases regardless of journal mode or feature flags:
+
+| Limitation | Detail |
+|------------|--------|
+| Query result ordering | Not guaranteed to be the same as SQLite (see [#2964](https://github.com/tursodatabase/turso/issues/2964)) |
+| Multi-process access | Not supported — only one process may open a database file at a time |
+| Multi-threading | Not supported within a single connection |
+| Savepoints | Not implemented |
+| Triggers | Experimental — not enabled by default |
+| Views | Experimental — not enabled by default |
+| VACUUM | Not supported |
+| Character encoding | UTF-8 only; UTF-16 is not supported |
+
+### Query Result Ordering
+
+Unordered `SELECT` queries may return rows in a different sequence than SQLite would. If your application depends on a specific row order, always use an explicit `ORDER BY` clause:
+
+```sql
+-- Unreliable: order is not guaranteed
+SELECT * FROM users;
+
+-- Reliable: explicit ordering
+SELECT * FROM users ORDER BY id;
+```
+
+### Multi-Process and Multi-Thread Access
+
+Turso does not support concurrent access from multiple processes or from multiple threads sharing a single connection. Each process must open its own database file, and each connection should be used from a single thread.
+
+```sql
+-- Each process/thread must use its own connection
+-- Sharing a sqlite3* handle across threads is not safe
+```
+
+<Note>
+Multiple concurrent *transactions* within a single process are supported through MVCC mode using `BEGIN CONCURRENT`. See [MVCC Limitations](#mvcc-limitations-experimental) below.
+</Note>
+
+### Savepoints
+
+`SAVEPOINT` and `RELEASE SAVEPOINT` syntax is parsed but not functionally implemented. Nested transaction control must be managed at the application level.
+
+```sql
+-- Parsed but not functional:
+SAVEPOINT my_savepoint;
+RELEASE SAVEPOINT my_savepoint;
+```
+
+### Triggers
+
+Triggers are experimental and not enabled by default. Enable them with the `--experimental-views` flag when starting `tursodb`.
+
+<Warning>
+Triggers are not production-ready. Do not use them for critical data.
+</Warning>
+
+### Views
+
+Views are experimental and not enabled by default. Enable them with the `--experimental-views` flag:
+
+```shell
+tursodb --experimental-views mydb.db
+```
+
+<Warning>
+Views are not production-ready. Do not use them for critical data.
+</Warning>
+
+### VACUUM
+
+`VACUUM` is not supported. Turso uses WAL mode by default, which manages space differently from SQLite's rollback journal. There is no current workaround for reclaiming space via VACUUM.
+
+```sql
+-- Not supported — will return an error:
+VACUUM;
+```
+
+### UTF-8 Only
+
+Turso only supports UTF-8 character encoding. SQLite's UTF-16 encoding (used by `sqlite3_open16`, `sqlite3_bind_text16`, `sqlite3_column_text16`, etc.) is not available.
+
+```sql
+-- UTF-8 encoding is the only valid value:
+PRAGMA encoding;
+-- Returns: UTF-8
+
+-- Attempting to set UTF-16 will not work:
+PRAGMA encoding = 'UTF-16';
+```
+
+---
+
+## MVCC Limitations (Experimental)
+
+MVCC (Multi-Version Concurrency Control) is enabled by switching to `mvcc` journal mode:
+
+```sql
+PRAGMA journal_mode = mvcc;
+```
+
+<Warning>
+MVCC is not production-ready. Queries may return incorrect results, features may not work, and panics may occur. Do not use MVCC for critical data.
+</Warning>
+
+### Summary of MVCC Limitations
+
+| Limitation | Detail |
+|------------|--------|
+| No indexes | Indexes cannot be created; databases with existing indexes cannot be used |
+| Eager data loading | All data is loaded from disk into memory on first access |
+| Checkpoint support | Only `PRAGMA wal_checkpoint(TRUNCATE)` is supported; it blocks both readers and writers |
+| No AUTOINCREMENT | Tables with `AUTOINCREMENT` cannot be created or inserted into |
+| Incorrect results | Queries may return incorrect results |
+| MVCC-to-WAL visibility | Changes written in MVCC mode are not visible after reopening in WAL mode unless checkpointed first |
+
+### No Indexes with MVCC
+
+When MVCC mode is active, indexes are not supported. Attempting to create an index or open a database that already has indexes will fail.
+
+```sql
+-- In MVCC mode, this will fail:
+CREATE INDEX idx ON users(email);
+```
+
+As a workaround, drop all indexes before switching to MVCC mode, or use WAL mode if your workload requires indexes.
+
+### Eager Data Loading
+
+MVCC loads all data from disk into memory on first access. For large databases this means:
+
+- Startup time is proportional to the total data size
+- Memory consumption equals the full uncompressed database size
+
+Only use MVCC with databases that comfortably fit in available memory.
+
+### Limited WAL Checkpoint Support
+
+Only the `TRUNCATE` checkpoint mode is supported under MVCC, and it blocks all readers and writers during the checkpoint:
+
+```sql
+-- Only this form is supported under MVCC:
+PRAGMA wal_checkpoint(TRUNCATE);
+
+-- Other checkpoint modes are not supported under MVCC:
+-- PRAGMA wal_checkpoint;
+-- PRAGMA wal_checkpoint(PASSIVE);
+-- PRAGMA wal_checkpoint(FULL);
+-- PRAGMA wal_checkpoint(RESTART);
+```
+
+### No AUTOINCREMENT
+
+`AUTOINCREMENT` is not supported in MVCC mode. Tables that declare `AUTOINCREMENT` columns cannot be created or inserted into while MVCC is enabled.
+
+```sql
+-- Not supported in MVCC mode:
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT
+);
+```
+
+Use a plain `INTEGER PRIMARY KEY` (which still auto-assigns rowids) as an alternative:
+
+```sql
+-- Works in MVCC mode:
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY,
+    name TEXT
+);
+```
+
+### MVCC-to-WAL Visibility
+
+If a database is written to using MVCC and then reopened without MVCC (i.e., in WAL mode), the changes written in MVCC mode are not visible unless they were checkpointed first:
+
+```sql
+-- Before switching back to WAL mode, checkpoint to persist MVCC changes:
+PRAGMA wal_checkpoint(TRUNCATE);
+PRAGMA journal_mode = wal;
+```
+
+---
+
+## Journaling Limitations
+
+Turso supports `wal` and `mvcc` journal modes. Legacy SQLite rollback journal modes are not supported.
+
+| Mode | Status | Reason |
+|------|--------|--------|
+| wal | ✅ Supported | Default mode; recommended for all production use |
+| mvcc | ✅ Supported | Experimental concurrent transactions |
+| delete | ❌ Not supported | Locks the database file during writes |
+| truncate | ❌ Not supported | Locks the database file during writes |
+| persist | ❌ Not supported | Locks the database file during writes |
+| memory | ❌ Not supported | Locks the database file during writes |
+| wal2 | ❌ Not supported | Experimental feature in SQLite; not planned |
+
+<Note>
+Turso has no plans to support rollback journal modes. The design goal is WAL-first durability without file-level locking during writes.
+</Note>
+
+Attempting to switch to an unsupported journal mode returns an error:
+
+```sql
+-- Returns an error:
+PRAGMA journal_mode = delete;
+```
+
+Legacy SQLite databases (which may use `delete` journal mode) are automatically converted to WAL mode when first opened by Turso.
+
+---
+
+## Workarounds Summary
+
+| Limitation | Workaround |
+|------------|------------|
+| No VACUUM | Use WAL checkpointing to reclaim WAL space: `PRAGMA wal_checkpoint(TRUNCATE)` |
+| No multi-threading | Open a separate connection per thread |
+| No savepoints | Manage nested transaction logic at the application level |
+| No views (stable) | Materialize view logic in application code or use CTEs |
+| No indexes in MVCC | Drop indexes before enabling MVCC, or use WAL mode |
+| No AUTOINCREMENT in MVCC | Use `INTEGER PRIMARY KEY` without `AUTOINCREMENT` |
+| UTF-8 only | Ensure all text data is encoded as UTF-8 before writing |
+| Unordered results | Always use `ORDER BY` when row order matters |

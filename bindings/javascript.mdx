@@ -1,0 +1,274 @@
+---
+title: "JavaScript"
+description: "Use Turso Database from Node.js and browsers via the @tursodatabase/database package."
+---
+
+<Warning>
+  Turso Database is currently in BETA. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+The `@tursodatabase/database` package provides a synchronous better-sqlite3-style API for Turso Database. It ships a native Node.js binding as well as a WebAssembly build for browser environments.
+
+## Installation
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install @tursodatabase/database
+    ```
+  </Tab>
+  <Tab title="yarn">
+    ```bash
+    yarn add @tursodatabase/database
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm add @tursodatabase/database
+    ```
+  </Tab>
+</Tabs>
+
+## Connecting to a database
+
+Import `connect` from `@tursodatabase/database` and call it with a file path or `":memory:"`.
+
+<CodeGroup>
+
+```javascript file-based database
+import { connect } from '@tursodatabase/database';
+
+const db = await connect('my-database.db');
+```
+
+```javascript in-memory database
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+```
+
+</CodeGroup>
+
+<Tip>
+  `connect()` is async and returns a `Database` object. Pass `":memory:"` for a transient in-memory database.
+</Tip>
+
+## Executing queries
+
+Use `db.exec()` to run one or more SQL statements without returning rows. Use `db.prepare()` to create a `Statement` and call `.all()`, `.get()`, or `.run()` on it.
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+
+// Execute DDL directly
+db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)');
+
+// Insert a row
+const insert = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+insert.run('Alice', 'alice@example.com');
+insert.run('Bob', 'bob@example.com');
+
+// Select all rows
+const users = db.prepare('SELECT * FROM users').all();
+console.log(users);
+// [
+//   { id: 1, name: 'Alice', email: 'alice@example.com' },
+//   { id: 2, name: 'Bob', email: 'bob@example.com' }
+// ]
+```
+
+## Prepared statements
+
+Call `db.prepare(sql)` to compile a SQL string into a reusable `Statement`. Statements expose three execution methods:
+
+| Method | Returns | Use for |
+|---|---|---|
+| `.all(...params)` | `Array` of row objects | SELECT returning multiple rows |
+| `.get(...params)` | Single row object or `undefined` | SELECT expecting at most one row |
+| `.run(...params)` | `{ changes, lastInsertRowid }` | INSERT / UPDATE / DELETE |
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+db.exec('CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)');
+
+const insert = db.prepare('INSERT INTO products (name, price) VALUES (?, ?)');
+const result = insert.run('Widget', 9.99);
+console.log('lastInsertRowid:', result.lastInsertRowid);
+console.log('changes:', result.changes);
+
+const selectAll = db.prepare('SELECT * FROM products');
+const allProducts = selectAll.all();
+console.log(allProducts);
+
+const selectOne = db.prepare('SELECT * FROM products WHERE id = ?');
+const product = selectOne.get(1);
+console.log(product); // { id: 1, name: 'Widget', price: 9.99 }
+```
+
+## Parameter binding
+
+Parameters are bound positionally with `?`. Pass arguments directly to `.run()`, `.all()`, or `.get()`:
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+db.exec('CREATE TABLE events (id INTEGER PRIMARY KEY, type TEXT, score INTEGER)');
+
+const insert = db.prepare('INSERT INTO events (type, score) VALUES (?, ?)');
+insert.run('click', 10);
+insert.run('view', 1);
+
+const highScore = db.prepare('SELECT * FROM events WHERE score > ?');
+const rows = highScore.all(5);
+console.log(rows); // [{ id: 1, type: 'click', score: 10 }]
+```
+
+You can also permanently bind parameters to a statement with `.bind()`:
+
+```javascript
+const stmt = db.prepare('SELECT * FROM events WHERE type = ?').bind('click');
+const clicks = stmt.all(); // no params needed at call site
+```
+
+## Reading results
+
+`.all()` returns an array of plain objects keyed by column name. `.get()` returns the first matching row or `undefined`. Use `.iterate()` to consume results lazily as a generator:
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+db.exec(`
+  CREATE TABLE logs (id INTEGER PRIMARY KEY, msg TEXT);
+  INSERT INTO logs VALUES (1, 'start');
+  INSERT INTO logs VALUES (2, 'stop');
+`);
+
+const stmt = db.prepare('SELECT * FROM logs');
+
+// Iterate lazily
+for (const row of stmt.iterate()) {
+  console.log(row.id, row.msg);
+}
+
+// Inspect column metadata
+const columns = stmt.columns();
+console.log(columns); // [{ name: 'id', type: 'INTEGER' }, { name: 'msg', type: 'TEXT' }]
+```
+
+## Transactions
+
+Wrap a function with `db.transaction()` to execute it atomically. The returned function begins a `BEGIN` / `COMMIT` block around the wrapped function, rolling back on any thrown error.
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+db.exec('CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)');
+db.prepare('INSERT INTO accounts VALUES (?, ?)').run(1, 1000);
+db.prepare('INSERT INTO accounts VALUES (?, ?)').run(2, 500);
+
+const transfer = db.transaction((fromId, toId, amount) => {
+  const debit = db.prepare(
+    'UPDATE accounts SET balance = balance - ? WHERE id = ?'
+  );
+  const credit = db.prepare(
+    'UPDATE accounts SET balance = balance + ? WHERE id = ?'
+  );
+
+  debit.run(amount, fromId);
+  credit.run(amount, toId);
+});
+
+// Execute atomically — rolls back if either statement throws
+transfer(1, 2, 100);
+
+console.log(db.prepare('SELECT * FROM accounts').all());
+// [{ id: 1, balance: 900 }, { id: 2, balance: 600 }]
+```
+
+The transaction function also exposes `.deferred`, `.immediate`, and `.exclusive` variants for fine-grained isolation:
+
+```javascript
+transfer.immediate(1, 2, 50); // BEGIN IMMEDIATE
+```
+
+## Error handling
+
+Errors thrown by the database are instances of `SqliteError`. Catch them with a standard `try/catch`:
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)');
+db.prepare('INSERT INTO users VALUES (1, "a@example.com")').run();
+
+try {
+  // Duplicate primary key
+  db.prepare('INSERT INTO users VALUES (1, "b@example.com")').run();
+} catch (err) {
+  console.error('Error code:', err.code);    // e.g. SQLITE_CONSTRAINT_PRIMARYKEY
+  console.error('Message:', err.message);
+}
+```
+
+## WebAssembly (browser)
+
+For browser environments, use the `@tursodatabase/wasm` package. The API is identical to the native package.
+
+```javascript
+import { connect } from '@tursodatabase/wasm';
+
+const db = await connect(':memory:');
+db.exec('CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)');
+db.prepare('INSERT INTO notes (text) VALUES (?)').run('Hello from the browser!');
+
+const notes = db.prepare('SELECT * FROM notes').all();
+console.log(notes);
+```
+
+<Note>
+  The WASM build runs entirely in the browser with no server required. Database state is stored in memory and lost on page reload unless you persist it via the File System Access API or IndexedDB.
+</Note>
+
+## Complete example
+
+```javascript
+import { connect } from '@tursodatabase/database';
+
+const db = await connect(':memory:');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+const insertPost = db.prepare(
+  'INSERT INTO posts (title, content) VALUES (?, ?)'
+);
+
+const createPost = db.transaction((title, content) => {
+  const result = insertPost.run(title, content);
+  return result.lastInsertRowid;
+});
+
+const id1 = createPost('Hello, Turso!', 'This is the first post.');
+const id2 = createPost('Second post', 'More content here.');
+
+console.log('Created posts:', id1, id2);
+
+const posts = db.prepare('SELECT id, title FROM posts ORDER BY id').all();
+for (const post of posts) {
+  console.log(`${post.id}: ${post.title}`);
+}
+```

@@ -1,0 +1,140 @@
+---
+title: "CLI Overview"
+description: "The tursodb interactive SQL shell — installation, startup modes, and command line options."
+---
+
+`tursodb` is an interactive SQL shell for Turso, similar to the `sqlite3` CLI. It lets you open databases, run SQL statements, and inspect schema — all from the terminal. It also doubles as an [MCP server](/cli/mcp-server) for AI assistant integration.
+
+## Installation
+
+<Tabs>
+  <Tab title="curl (recommended)">
+    ```bash
+    curl --proto '=https' --tlsv1.2 -LsSf \
+      https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
+    ```
+  </Tab>
+  <Tab title="Homebrew">
+    ```bash
+    brew install turso
+    ```
+  </Tab>
+  <Tab title="Cargo (from source)">
+    ```bash
+    cargo run
+    ```
+    Or build with Docker from the repo root:
+    ```bash
+    make docker-cli-build && make docker-cli-run
+    ```
+  </Tab>
+</Tabs>
+
+After installation the binary is available as `tursodb`.
+
+## Starting the shell
+
+### In-memory mode
+
+Run `tursodb` with no arguments to start a transient in-memory database. All data is discarded when you exit.
+
+```bash
+tursodb
+```
+
+```console
+Turso
+Enter ".help" for usage hints.
+Connected to a transient in-memory database.
+Use ".open FILENAME" to reopen on a persistent database
+turso>
+```
+
+### File mode
+
+Pass a path to open (or create) a persistent database file.
+
+```bash
+tursodb myapp.db
+```
+
+The file is created if it does not exist. The format is fully SQLite-compatible.
+
+### Read-only mode
+
+Open an existing database without allowing any writes:
+
+```bash
+tursodb myapp.db --readonly
+```
+
+## Example session
+
+```console
+$ tursodb
+Turso
+Enter ".help" for usage hints.
+Connected to a transient in-memory database.
+Use ".open FILENAME" to reopen on a persistent database
+turso> CREATE TABLE users (id INT, username TEXT);
+turso> INSERT INTO users VALUES (1, 'alice');
+turso> INSERT INTO users VALUES (2, 'bob');
+turso> SELECT * FROM users;
+1|alice
+2|bob
+turso> .schema users
+CREATE TABLE users (id INT, username TEXT);
+turso> .quit
+```
+
+## Command line options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `DATABASE` | — | Path to the SQLite database file. Defaults to an in-memory database (`:memory:`). |
+| `SQL` | — | Optional SQL statement to execute non-interactively, then exit. |
+| `--output-mode <mode>` | `-m` | Output format. `pretty` (default) renders a bordered table; `list` produces pipe-separated rows compatible with SQLite's default output; `line` prints one column per line. |
+| `--quiet` | `-q` | Suppress the startup banner. |
+| `--echo` | `-e` | Print each command before executing it. |
+| `--readonly` | — | Open the database in read-only mode. Writes are rejected. |
+| `--mcp` | — | Start an [MCP server](/cli/mcp-server) instead of the interactive shell. |
+| `--experimental-encryption` | — | Enable encryption at rest (experimental — do not use with critical data). |
+| `--experimental-views` | — | Enable the experimental views feature (not production-ready). |
+| `--help` | `-h` | Print help and exit. |
+| `--version` | `-V` | Print the version number and exit. |
+
+### Output modes
+
+<CodeGroup>
+```console pretty (default)
+turso> SELECT * FROM users;
+┌────┬──────────┐
+│ id │ username │
+├────┼──────────┤
+│ 1  │ alice    │
+├────┼──────────┤
+│ 2  │ bob      │
+└────┴──────────┘
+```
+
+```console list
+turso> SELECT * FROM users;
+1|alice
+2|bob
+```
+
+```console line
+turso> SELECT * FROM users;
+   id = 1
+username = alice
+
+   id = 2
+username = bob
+```
+</CodeGroup>
+
+You can also switch the output mode at runtime inside the shell using the [`.mode` command](/cli/shell-commands#output-mode).
+
+<Note>
+Turso is currently in **beta**. It may contain bugs and unexpected behavior. Avoid using it with critical production data without backups.
+</Note>

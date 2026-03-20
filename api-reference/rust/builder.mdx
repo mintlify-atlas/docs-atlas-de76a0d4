@@ -1,0 +1,142 @@
+---
+title: "Builder"
+description: "Constructs a Turso Database from a file path or an in-memory store."
+---
+
+`Builder` is the entry point for opening a Turso database in Rust. Configure it with optional feature flags and call `.build().await` to get a `Database`.
+
+```rust
+use turso::Builder;
+
+let db = Builder::new_local("app.db").build().await?;
+```
+
+## `Builder::new_local(path)`
+
+Creates a `Builder` that will open the SQLite database at `path`. If the file does not exist it will be created.
+
+```rust
+use turso::Builder;
+
+// File-backed database
+let builder = Builder::new_local("app.db");
+
+// In-memory database
+let builder = Builder::new_local(":memory:");
+```
+
+<ParamField path="path" type="&str" required>
+  Path to the database file, or `":memory:"` for an in-memory database.
+</ParamField>
+
+**Returns** `Builder`
+
+## `builder.build().await`
+
+Opens the database and returns a `Database`. This is `async` because Turso may need to perform I/O during database initialization (for example, reading WAL frames).
+
+```rust
+let db = Builder::new_local("app.db").build().await?;
+```
+
+**Returns** `Result<Database>`
+
+## Optional configuration methods
+
+All configuration methods take `self` and return `Self`, so they can be chained:
+
+```rust
+let db = Builder::new_local("app.db")
+    .experimental_attach(true)
+    .experimental_custom_types(true)
+    .build()
+    .await?;
+```
+
+### `.experimental_encryption(enabled)`
+
+Enables the experimental at-rest encryption feature.
+
+<ParamField path="enabled" type="bool" required>
+  Pass `true` to enable encryption.
+</ParamField>
+
+**Returns** `Builder`
+
+### `.with_encryption(opts)`
+
+Provides an `EncryptionOpts` value containing the cipher name and hex-encoded key. Implicitly enables encryption.
+
+```rust
+use turso::{Builder, EncryptionOpts};
+
+let opts = EncryptionOpts {
+    cipher: "aegis256".to_string(),
+    hexkey: "2d7a30108d3eb3e4...".to_string(),
+};
+let db = Builder::new_local("app.db")
+    .with_encryption(opts)
+    .build()
+    .await?;
+```
+
+<ParamField path="opts" type="EncryptionOpts" required>
+  Encryption configuration.
+
+  <Expandable title="EncryptionOpts fields">
+    <ResponseField name="cipher" type="String" required>
+      Cipher name, e.g. `"aegis256"` or `"aes256gcm"`.
+    </ResponseField>
+    <ResponseField name="hexkey" type="String" required>
+      Hex-encoded 32-byte key (64 hex characters).
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `Builder`
+
+### `.experimental_attach(enabled)`
+
+Enables the `ATTACH DATABASE` SQL command.
+
+**Returns** `Builder`
+
+### `.experimental_custom_types(enabled)`
+
+Enables custom column type handling.
+
+**Returns** `Builder`
+
+### `.experimental_index_method(enabled)`
+
+Enables user-defined index methods.
+
+**Returns** `Builder`
+
+### `.experimental_materialized_views(enabled)`
+
+Enables experimental materialized view support.
+
+**Returns** `Builder`
+
+### `.with_io(vfs)`
+
+Overrides the I/O backend. Supported values depend on the target platform.
+
+<ParamField path="vfs" type="String" required>
+  VFS identifier string.
+</ParamField>
+
+**Returns** `Builder`
+
+## The `Database` type
+
+After calling `.build()` you hold a `Database`. It is `Clone` and cheap to share across tasks — internally it is an `Arc`.
+
+```rust
+// Database is Clone
+let db2 = db.clone();
+let conn = db2.connect()?;
+```
+
+See [Connection](/api-reference/rust/connection) for the methods available after calling `db.connect()`.

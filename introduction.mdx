@@ -1,0 +1,133 @@
+---
+title: "Turso Database"
+description: "An in-process SQL database written in Rust, compatible with SQLite."
+---
+
+<img
+  src="https://media.brand.dev/288cc7c4-5cef-4376-950b-bdf0083eedae.png"
+  alt="Turso Database"
+  style={{ width: "80px", marginBottom: "24px" }}
+/>
+
+# Welcome to Turso
+
+Turso is an **in-process SQL database written in Rust**, fully compatible with SQLite. It brings together the simplicity of SQLite with modern capabilities like vector search, full-text search, asynchronous I/O, and multi-language bindings.
+
+<Warning>
+  Turso is currently in **BETA**. It may still contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+## Why Turso?
+
+Unlike client-server databases like PostgreSQL or MySQL that communicate over a network, Turso runs **inside your application's memory space**. This embedded architecture eliminates network overhead, enabling sub-microsecond read and write latencies.
+
+<CardGroup cols={2}>
+  <Card title="SQLite Compatible" icon="database">
+    Drop-in replacement for SQLite with the same file format, SQL dialect, and C API
+  </Card>
+  <Card title="Written in Rust" icon="shield-check">
+    Memory-safe, high-performance implementation with no garbage collector pauses
+  </Card>
+  <Card title="Multi-Language" icon="code">
+    Native bindings for Rust, JavaScript, Python, Go, and Java
+  </Card>
+  <Card title="Async I/O" icon="bolt">
+    io_uring support on Linux for maximum storage throughput
+  </Card>
+  <Card title="Vector Search" icon="magnifying-glass">
+    Built-in vector distance functions for semantic search and AI workloads
+  </Card>
+  <Card title="Full-Text Search" icon="text">
+    Powered by Tantivy with BM25 relevance scoring and rich query syntax
+  </Card>
+</CardGroup>
+
+## Features
+
+<AccordionGroup>
+  <Accordion title="SQLite Compatibility">
+    Turso targets full SQLite compatibility including the SQL dialect, binary file format, and the C API. Existing SQLite database files can be opened directly in Turso without conversion.
+  </Accordion>
+  <Accordion title="Multi-Language Bindings">
+    Use Turso from your language of choice:
+    - **Rust** — `cargo add turso`
+    - **JavaScript/Node.js** — `npm i @tursodatabase/database`
+    - **Python** — `uv pip install pyturso`
+    - **Go** — `go get turso.tech/database/tursogo`
+    - **Java** — Available via Maven Central
+    - **WebAssembly** — Run in browsers with the WASM build
+  </Accordion>
+  <Accordion title="Vector Search">
+    Store and query vector embeddings with multiple distance metrics: cosine, L2 (Euclidean), dot product, and Jaccard. Supports dense, sparse, quantized (8-bit), and binary (1-bit) vector types.
+  </Accordion>
+  <Accordion title="Full-Text Search (Experimental)">
+    Create FTS indexes on text columns using `CREATE INDEX ... USING fts`. Query with BM25 scoring, phrase search, boolean operators, and field boosting.
+  </Accordion>
+  <Accordion title="Change Data Capture">
+    Enable CDC to automatically log every INSERT, UPDATE, and DELETE to a `turso_cdc` table. Supports capturing row state before and/or after changes.
+  </Accordion>
+  <Accordion title="MVCC — Concurrent Transactions (Experimental)">
+    Enable multi-version concurrency control with `PRAGMA journal_mode = mvcc` for snapshot isolation and concurrent write transactions.
+  </Accordion>
+  <Accordion title="MCP Server">
+    Run Turso as a Model Context Protocol server (`tursodb mydb.db --mcp`) so AI assistants like Claude can query and modify your database through natural language.
+  </Accordion>
+</AccordionGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running with Turso in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the CLI and language bindings
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn the `tursodb` interactive shell
+  </Card>
+  <Card title="SQL Reference" icon="table" href="/sql-reference/introduction">
+    Browse the full SQL language reference
+  </Card>
+</CardGroup>
+
+## Language Bindings
+
+<CardGroup cols={3}>
+  <Card title="Rust" icon="rust" href="/bindings/rust">
+    Native async Rust API
+  </Card>
+  <Card title="JavaScript" icon="js" href="/bindings/javascript">
+    Node.js and WASM support
+  </Card>
+  <Card title="Python" icon="python" href="/bindings/python">
+    DB-API 2.0 compatible
+  </Card>
+  <Card title="Go" icon="golang" href="/bindings/go">
+    database/sql driver
+  </Card>
+  <Card title="Java" icon="java" href="/bindings/java">
+    JDBC integration
+  </Card>
+</CardGroup>
+
+## How Turso Differs from libSQL
+
+Turso and libSQL are both evolutions of SQLite, but approach it differently:
+
+| | Turso | libSQL |
+|---|---|---|
+| Approach | Full rewrite in Rust | Fork of SQLite (C) |
+| Status | Beta | Production ready |
+| Native async | Yes (io_uring) | Limited |
+| Memory safety | Yes (Rust) | No |
+
+The Turso rewrite began as an experiment and has been so successful that it replaces libSQL as Turso's primary direction. [Read the announcement](https://turso.tech/blog/we-will-rewrite-sqlite-and-we-are-going-all-in).
+
+## Community
+
+Join the community to get help and stay updated:
+
+- [Discord (core developers)](https://discord.gg/jgjmyYgHwB)
+- [Discord (users)](https://tur.so/discord)
+- [GitHub](https://github.com/tursodatabase/turso)

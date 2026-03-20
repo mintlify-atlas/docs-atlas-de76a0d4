@@ -1,0 +1,232 @@
+---
+title: "MVCC"
+description: "Turso's experimental multi-version concurrency control: snapshot isolation, the logical log, garbage collection, and recovery semantics."
+---
+
+<Warning>
+MVCC is experimental and not production-ready. Garbage collection is incomplete, and checkpoint blocks all transactions including reads. Do not use MVCC in production workloads. When debugging non-MVCC issues, ignore this subsystem entirely.
+</Warning>
+
+MVCC (Multi-Version Concurrency Control) is an alternative journal mode that provides row-level snapshot isolation. Instead of writing full pages to the WAL on every commit, it tracks individual row versions in an in-memory index and writes a logical log to disk.
+
+The implementation draws from the Hekaton approach described in Larson et al. (2011), with modifications for SQLite file format compatibility.
+
+## Enabling MVCC
+
+```sql
+PRAGMA journal_mode = 'mvcc';
+```
+
+This is a runtime, per-database setting. There is no compile-time feature flag.
+
+## How MVCC differs from WAL
+
+| Aspect | WAL | MVCC |
+|--------|-----|------|
+| Write granularity | Full pages per commit | Affected rows only |
+| Readers vs. writers | Don't block each other | Don't block each other |
+| Persistence file | `.db-wal` | `.db-log` (logical log) |
+| Isolation level | Page-level snapshot | Row-level snapshot |
+| Garbage collection | Automatic (WAL reuse) | Not yet implemented |
+
+## Architecture
+
+MVCC uses a three-tier storage hierarchy:
+
+```
+Database
+  └─ MvStore  (shared across all connections)
+      ├─ rows: SkipMap<RowID, Vec<RowVersion>>   ← primary read/write target
+      ├─ txs:  SkipMap<TxID, Transaction>        ← active transaction registry
+      ├─ Storage (.db-log file)                  ← durable logical log
+      └─ CheckpointStateMachine                  ← periodic flush to B-tree
+```
+
+Each connection has a private `mv_tx` tracking its current MVCC transaction. The `MvStore` is shared and uses lock-free `crossbeam_skiplist` data structures.
+
+## Row versioning
+
+Every row version carries three fields:
+
+| Field | Meaning |
+|-------|---------|
+| `begin` | Timestamp (transaction ID) when this version became visible |
+| `end` | Timestamp when this version was deleted or replaced; `∞` if still current |
+| `btree_resident` | True if this version existed before MVCC was enabled |
+
+Example: three transactions on a table with a single `id` column:
+
+- **T0** inserts `id=1` → version `(begin=0, end=∞, id=1)`
+- **T1** inserts `id=2` → version `(begin=1, end=∞, id=2)`
+- **T2** deletes `id=1` and inserts `id=3`:
+  - Deletes row 1: updates its version to `(begin=0, end=2, id=1)`
+  - Inserts row 3: version `(begin=2, end=∞, id=3)`
+
+When MVCC bootstraps or recovers, it replays the logical log from start to end to reconstruct this in-memory state.
+
+## Read path
+
+Reads follow a lazy loading strategy with a strict precedence order:
+
+1. Query the in-memory MVCC index. If the row exists and is visible to the current transaction's snapshot, return it.
+2. If not in the MVCC index, fall back to the page cache (which may itself load from the WAL or main `.db` file).
+
+A row version is visible to a transaction with `begin_ts = T` if `version.begin ≤ T < version.end`.
+
+## Write path
+
+All writes during a transaction are handled entirely within the in-memory MVCC index. This provides:
+
+- High-performance writes with minimal latency.
+- Immediate read-your-own-writes visibility within the transaction.
+- Isolation from other concurrent transactions until commit.
+
+## Commit protocol
+
+Commit uses a two-phase approach to ensure durability:
+
+1. Write the complete transaction write set from the MVCC index to the page cache.
+2. Flush page cache contents to the WAL, making the transaction durable.
+
+Once both phases succeed, the commit is permanent and will survive crashes.
+
+<Note>
+Unlike Hekaton, Turso does not maintain a record of logical changes after flushing to the WAL. This simplifies compatibility with the SQLite file format.
+</Note>
+
+## Checkpointing
+
+Checkpointing flushes the in-memory row versions to the B-tree on disk. It is currently a **blocking, stop-the-world** operation.
+
+```sql
+-- Configure auto-checkpoint threshold (in pages)
+PRAGMA mvcc_checkpoint_threshold = 1000;
+```
+
+The checkpoint sequence:
+
+1. Acquire blocking checkpoint lock (blocks all other transactions, including reads).
+2. Begin a pager transaction.
+3. Write committed MVCC row/index versions into the pager.
+4. Upsert the `persistent_tx_ts_max` metadata row atomically in the same pager transaction.
+5. Commit the pager transaction (WAL now contains committed frames).
+6. Checkpoint WAL (backfill frames into the `.db` file).
+7. Fsync the `.db` file.
+8. Truncate the logical log to 0 bytes (salt regenerated; header written with next frame).
+9. Fsync the logical log.
+10. Truncate the WAL.
+11. GC checkpointed versions; release the lock.
+
+WAL truncation is the last step. Until the `.db` file and logical log cleanup are durable, the WAL remains the authoritative recovery source.
+
+## Garbage collection
+
+The MVCC store accumulates row versions in memory as writes occur. Without GC, memory grows monotonically. The GC system reclaims versions that no active reader can see and that are redundant with the B-tree.
+
+GC is driven by two parameters computed at GC time:
+
+- **LWM (low-water mark)** — `min(tx.begin_ts)` across all active/preparing transactions, or `u64::MAX` if none. Defines the oldest snapshot any reader holds.
+- **`ckpt_max`** (`durable_txid_max`) — the highest committed timestamp whose data has been written to the B-tree. Defines when B-tree fallthrough is safe.
+
+Four GC rules are applied to every version chain:
+
+1. **Aborted garbage** (`begin=None, end=None`) — remove unconditionally.
+2. **Superseded versions** (`end=Timestamp(e), e ≤ lwm`) — remove, unless doing so would let the dual cursor surface a stale B-tree row (tombstone guard).
+3. **Sole-survivor current version** (`end=None, begin ≤ ckpt_max, begin < lwm`, chain length = 1) — remove; the B-tree already has the same data.
+4. **TxID references** (`begin=TxID` or `end=TxID`) — keep; the owning transaction hasn't resolved yet.
+
+GC runs automatically in the `Finalize` stage of each checkpoint.
+
+## Recovery
+
+Turso uses four durable artifacts to determine startup state:
+
+- Main database file (`.db`)
+- WAL file (`.db-wal`)
+- MVCC logical log (`.db-log`)
+- Metadata table row: `__turso_internal_mvcc_meta(k='persistent_tx_ts_max')`
+
+Recovery classifies startup state by checking whether the WAL has committed frames and whether the logical log header is valid:
+
+<AccordionGroup>
+  <Accordion title="Case 1: WAL has committed frames + valid log header">
+    Complete interrupted checkpoint: backfill WAL into DB, sync DB, truncate WAL. Then run logical-log recovery with metadata cutoff.
+  </Accordion>
+  <Accordion title="Case 2: WAL has committed frames + log header missing">
+    Fail closed with `Corrupt`. A committed WAL without a logical log is an inconsistent state.
+  </Accordion>
+  <Accordion title="Case 3: WAL has committed frames + log header invalid/torn">
+    Fail closed with `Corrupt`.
+  </Accordion>
+  <Accordion title="Case 4: WAL has no committed frames">
+    Truncate/discard WAL tail bytes and continue logical-log recovery.
+  </Accordion>
+  <Accordion title="Case 5: No WAL + invalid/torn log header">
+    Fail closed with `Corrupt`.
+  </Accordion>
+  <Accordion title="Case 6: No WAL + valid header, no frames">
+    No replay needed; timestamp state comes from the metadata row.
+  </Accordion>
+  <Accordion title="Case 7: No WAL + empty log (0 bytes)">
+    Normal post-checkpoint state. Timestamp loaded from metadata row if present; no replay.
+  </Accordion>
+</AccordionGroup>
+
+The logical clock is reseeded to `max(persistent_tx_ts_max, max_replayed_log_commit_ts) + 1`.
+
+## Correctness invariants
+
+1. Startup reaches one consistent state or fails closed — no best-effort ambiguity.
+2. Committed WAL state is never ignored.
+3. Invalid logical-log tail frames are never replayed.
+4. `persistent_tx_ts_max` is advanced atomically with the pager commit during checkpoint.
+5. Replay applies only frames with `commit_ts > persistent_tx_ts_max`.
+6. After interrupted-checkpoint reconciliation, the WAL is truncated.
+
+## Current limitations
+
+- **No garbage collection of old versions** — memory use grows monotonically with write volume.
+- **No recovery from the logical log on restart** — the in-memory state must be reconstructed from the log on every open.
+- **Checkpoint blocks all transactions**, including reads.
+- **No disk spill** — the in-memory SkipMap is unbounded.
+- **No serializability** — MVCC provides snapshot isolation, not serializable isolation.
+
+## Key source files
+
+| File | Contents |
+|------|----------|
+| `core/mvcc/mod.rs` | Module overview; documents data anomaly definitions |
+| `core/mvcc/database/mod.rs` | Main implementation (~3,000 LOC): reads, writes, commit, GC |
+| `core/mvcc/cursor.rs` | Dual cursor merging MVCC SkipMap with B-tree reads |
+| `core/mvcc/persistent_storage/logical_log.rs` | Logical log on-disk format |
+| `core/mvcc/database/checkpoint_state_machine.rs` | Checkpoint logic and GC triggers |
+| `core/mvcc/clock.rs` | Logical clock |
+
+## Testing
+
+```bash
+# Run MVCC unit and integration tests
+cargo test mvcc
+
+# TCL tests with MVCC enabled
+make test-mvcc
+```
+
+Use the `#[turso_macros::test(mvcc)]` attribute to write MVCC-enabled Rust tests:
+
+```rust
+#[turso_macros::test(mvcc)]
+fn test_snapshot_isolation() {
+    // Runs with MVCC journal mode enabled
+}
+```
+
+For interactive multi-connection MVCC testing, use the MVCC REPL:
+
+```bash
+cargo run --bin mvcc_repl
+```
+
+## References
+
+Per-Åke Larson et al. "High-Performance Concurrency Control Mechanisms for Main-Memory Databases." In *VLDB '11*.

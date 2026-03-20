@@ -1,0 +1,167 @@
+---
+title: "Virtual machine"
+description: "How Turso's VDBE bytecode interpreter executes SQL programs: the execution loop, key opcodes, and how to read EXPLAIN output."
+---
+
+Turso executes SQL through a **Virtual Database Engine (VDBE)** — a register-based bytecode interpreter. The VDBE is defined in `core/vdbe/execute.rs` (~12,000 lines) with all opcode types in `core/vdbe/insn.rs`.
+
+This design is inherited from SQLite, whose [opcode reference](https://www.sqlite.org/opcode.html) provides additional background.
+
+## The execution model
+
+Every prepared SQL statement is compiled to a `Program`: a flat array of `Insn` (instruction) values. Each instruction has an opcode and up to five operands named `p1`–`p5` (matching SQLite's opcode documentation convention).
+
+The VDBE maintains:
+
+- **Program counter (pc)** — index of the next instruction to execute.
+- **Register file** — an array of `Value` cells used as scratch space.
+- **Cursor table** — open B-tree cursors, one per table/index being scanned or written.
+- **Completion** — pending async I/O operations (see [Async I/O](/internals/async-io)).
+
+Execution proceeds in a loop: fetch the instruction at `pc`, dispatch to the handler function, update `pc`. The loop yields in three ways:
+
+| Return value | Meaning |
+|---|---|
+| `StepResult::Row` | A result row is ready; caller reads it and calls `step()` again |
+| `StepResult::IO` | Waiting for async I/O; caller must poll completions and call `step()` again |
+| `StepResult::Done` | Query finished (no more rows) |
+| `StepResult::Interrupt` | Execution interrupted |
+
+## Reading EXPLAIN output
+
+Run `EXPLAIN <statement>` in the `tursodb` shell to print the compiled bytecode:
+
+```sql
+tursodb> EXPLAIN SELECT 'hello, world';
+addr  opcode             p1    p2    p3    p4             p5  comment
+----  -----------------  ----  ----  ----  -------------  --  -------
+0     Init               0     4     0                    0   Start at 4
+1     String8            0     1     0     hello, world   0   r[1]='hello, world'
+2     ResultRow          1     1     0                    0   output=r[1]
+3     Halt               0     0     0                    0
+4     Transaction        0     0     0                    0
+5     Goto               0     1     0                    0
+```
+
+Execution starts at address 0:
+1. `Init` sets up the program and jumps to address `p2` (4).
+2. `Transaction` at address 4 begins a read transaction.
+3. `Goto` at address 5 jumps to address 1.
+4. `String8` loads the constant `'hello, world'` into register `r[1]`.
+5. `ResultRow` emits `r[1]` as the result row — `step()` returns `StepResult::Row`.
+6. After the caller reads the row and calls `step()` again, `Halt` terminates execution.
+
+## Key opcodes
+
+<AccordionGroup>
+  <Accordion title="Control flow">
+    | Opcode | Description |
+    |--------|-------------|
+    | `Init { target_pc }` | Initialize program state; jump to `target_pc`. Always the first instruction. |
+    | `Halt { err_code, .. }` | Terminate the program. `err_code=0` means success. |
+    | `HaltIfNull { target_reg, .. }` | Halt with an error if the value in `target_reg` is NULL. |
+    | `Goto { target_pc }` | Unconditional branch. |
+    | `If { reg, target_pc, jump_if_null }` | Branch if `r[reg]` is non-zero. |
+    | `IfNot { reg, target_pc, jump_if_null }` | Branch if `r[reg]` is zero. |
+  </Accordion>
+  <Accordion title="Transactions">
+    | Opcode | Description |
+    |--------|-------------|
+    | `Transaction { db, tx_mode }` | Begin a transaction. `tx_mode` is read or write. |
+    | `Savepoint { op }` | Begin, release, or roll back to a savepoint. |
+    | `AutoCommit { is_begin, is_deferred }` | Commit or roll back the current transaction. |
+  </Accordion>
+  <Accordion title="Cursors: opening">
+    | Opcode | Description |
+    |--------|-------------|
+    | `OpenRead { cursor_id, root_page, db }` | Open a cursor on a B-tree page for reading. |
+    | `OpenWrite { cursor_id, root_page, db }` | Open a cursor on a B-tree page for writing. |
+    | `OpenPseudo { cursor_id, content_reg, num_fields }` | Open a cursor on a pseudo-table backed by a register. |
+    | `VOpen { cursor_id }` | Open a cursor on a virtual table. |
+  </Accordion>
+  <Accordion title="Cursors: scanning">
+    | Opcode | Description |
+    |--------|-------------|
+    | `Rewind { cursor_id, pc_if_empty }` | Move cursor to first row; jump to `pc_if_empty` if the table is empty. |
+    | `Next { cursor_id, pc_if_next }` | Advance cursor; jump to `pc_if_next` if another row exists (loop back). |
+    | `Prev { cursor_id, pc_if_prev }` | Move cursor backward. |
+    | `Last { cursor_id, pc_if_empty }` | Move cursor to last row. |
+    | `Column { cursor_id, column, dest }` | Read column `column` from the current row into register `dest`. |
+  </Accordion>
+  <Accordion title="Seek operations">
+    | Opcode | Description |
+    |--------|-------------|
+    | `SeekRowid { cursor_id, src_reg, pc_if_not_found }` | Seek by integer rowid. |
+    | `SeekGT` / `SeekGE` / `SeekLT` / `SeekLE` | Seek to first row satisfying the comparison. |
+    | `IdxGT` / `IdxGE` / `IdxLT` / `IdxLE` | Index-specific comparisons for range scans. |
+    | `Found` / `NotFound` | Jump if an exact-match seek succeeds or fails. |
+  </Accordion>
+  <Accordion title="Data manipulation">
+    | Opcode | Description |
+    |--------|-------------|
+    | `MakeRecord { start_reg, count, dest_reg }` | Serialize registers `start_reg..start_reg+count` into a record blob in `dest_reg`. |
+    | `Insert { cursor_id, key_reg, record_reg, .. }` | Insert a record into the open write cursor. |
+    | `Delete { cursor_id }` | Delete the current row of the cursor. |
+    | `IdxInsert { cursor_id, key_reg, .. }` | Insert a key into an index B-tree. |
+    | `IdxDelete { cursor_id, start_reg, .. }` | Delete a key from an index B-tree. |
+  </Accordion>
+  <Accordion title="Result emission">
+    | Opcode | Description |
+    |--------|-------------|
+    | `ResultRow { start_reg, count }` | Emit registers `start_reg..start_reg+count` as a result row. Causes `step()` to return `StepResult::Row`. |
+  </Accordion>
+  <Accordion title="Registers and values">
+    | Opcode | Description |
+    |--------|-------------|
+    | `Integer { value, dest }` | Load integer literal into `dest`. |
+    | `String8 { value, dest }` | Load string literal into `dest`. |
+    | `Real { value, dest }` | Load float literal into `dest`. |
+    | `Null { dest, dest_end }` | Write NULL into `dest` (and optionally a range of registers). |
+    | `Copy { src, dest }` | Copy register value. |
+    | `Add` / `Subtract` / `Multiply` / `Divide` | Arithmetic on registers. |
+    | `Concat { lhs, rhs, dest }` | String concatenation. |
+    | `Compare { start_reg_a, start_reg_b, count }` | Compare two register vectors for sorting. |
+  </Accordion>
+  <Accordion title="Aggregation and sorting">
+    | Opcode | Description |
+    |--------|-------------|
+    | `AggStep { func, args_reg, dest }` | Accumulate one row into an aggregate function. |
+    | `AggFinal { func, dest }` | Finalize aggregate and write result to `dest`. |
+    | `SorterInsert { cursor_id, record_reg }` | Feed a row to the external sorter. |
+    | `SorterSort { cursor_id, pc_if_empty }` | Sort the accumulated rows. |
+    | `SorterData { cursor_id, dest_reg }` | Read the current sorted row. |
+    | `SorterNext { cursor_id, pc_if_next }` | Advance to next sorted row. |
+  </Accordion>
+</AccordionGroup>
+
+## A table scan example
+
+For a simple query like `SELECT id, name FROM users WHERE active = 1`, the bytecode looks roughly like:
+
+```
+addr  opcode        p1  p2  p3  comment
+----  ------------  --  --  --  -------
+0     Init          0   9   0   Start at 9
+1     OpenRead      0   2   0   root=2; users
+2     Rewind        0   8   0   rewind cursor 0; jump to 8 if empty
+3     Column        0   2   1   r[1]=users.active
+4     Integer       1   2   0   r[2]=1
+5     Ne            2   7   1   if r[1]!=r[2] goto 7
+6     Column        0   0   3   r[3]=users.id
+6     Column        0   1   4   r[4]=users.name
+7     ResultRow     3   2   0   output=r[3..4]
+8     Next          0   3   0   advance cursor; loop to 3
+9     Halt          0   0   0
+10    Transaction   0   0   0
+11    Goto          0   1   0
+```
+
+The core loop is `Rewind` → `Column`/filter/`ResultRow` → `Next` → back to `Column`. `ResultRow` causes `step()` to return `StepResult::Row` to the caller, which reads the columns and calls `step()` again to continue the loop.
+
+## Async execution
+
+Because storage I/O is asynchronous, any opcode that touches a B-tree page can return `StepResult::IO` before completing its work. The VDBE stores its intermediate state in the cursor and register file, and the caller must re-enter `step()` after the I/O completes.
+
+This is transparent to callers: they simply loop calling `step()` until they get `StepResult::Row` or `StepResult::Done`.
+
+See [Async I/O](/internals/async-io) for the underlying `IOResult` / `Completion` machinery.

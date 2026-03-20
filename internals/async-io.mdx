@@ -1,0 +1,217 @@
+---
+title: "Async I/O"
+description: "How Turso models asynchronous I/O with IOResult, Completion, and explicit state machines instead of Rust async/await."
+---
+
+Turso uses a custom async I/O model based on cooperative yielding and explicit state machines. It does **not** use Rust's `async`/`await` or any executor (Tokio, etc.). Instead, every I/O operation is tracked by a `Completion` object, and functions that do I/O return `IOResult<T>` to signal whether they are done or still waiting.
+
+This design enables:
+
+- `io_uring` on Linux for high-throughput, low-latency storage.
+- Cloud-backed storage (backup, sync) without threads.
+- Full control over scheduling and re-entrancy without hidden executor overhead.
+
+## Core types
+
+```rust
+pub enum IOCompletions {
+    Single(Completion),
+}
+
+#[must_use]
+pub enum IOResult<T> {
+    Done(T),             // operation complete, here is the result
+    IO(IOCompletions),   // waiting for I/O; call me again after completion
+}
+```
+
+A function that returns `IOResult<T>` must be called repeatedly until it returns `IOResult::Done`. This is analogous to `Future::poll` — `IO` corresponds to `Poll::Pending` and `Done` to `Poll::Ready`.
+
+<Note>
+This is sometimes called "function coloring at the application level" — instead of the compiler tracking async functions with `Future` types, the programmer makes the async boundary explicit in the return type.
+</Note>
+
+## Completion
+
+A `Completion` tracks a single in-flight I/O operation. The I/O backend calls its callback when the operation finishes:
+
+```rust
+pub struct Completion { /* ... */ }
+
+impl Completion {
+    pub fn finished(&self) -> bool;
+    pub fn succeeded(&self) -> bool;
+    pub fn get_error(&self) -> Option<CompletionError>;
+}
+```
+
+To know whether a function does any I/O, look at its return type: if it returns `Completion`, `Vec<Completion>`, or `IOResult`, it does I/O.
+
+## CompletionGroup
+
+To wait for multiple I/O operations simultaneously, use `CompletionGroup`:
+
+```rust
+let mut group = CompletionGroup::new(|_| {});
+
+group.add(&completion1);
+group.add(&completion2);
+
+// Build into a single completion that finishes when all complete
+let combined = group.build();
+io_yield_one!(combined);
+```
+
+`CompletionGroup` aggregates completions into one, calls a callback when all finish (or any error occurs), and can be cancelled with `group.cancel()`. Groups can be nested.
+
+## Helper macros
+
+Two macros reduce boilerplate:
+
+```rust
+// Unwrap IOResult::Done, or propagate IOResult::IO up the call stack
+let result = return_if_io!(some_io_operation());
+// Only reaches here if Done
+
+// Yield a single completion
+io_yield_one!(completion);
+// Equivalent to: return Ok(IOResult::IO(IOCompletions::Single(completion)))
+```
+
+## State machine pattern
+
+Functions that may yield multiple times use explicit state enums to record progress between calls:
+
+```rust
+enum MyOperationState {
+    Start,
+    WaitingForRead { page: PageRef },
+    Processing { data: Vec<u8> },
+    Done,
+}
+
+fn my_operation(&mut self) -> Result<IOResult<Output>> {
+    loop {
+        match &mut self.state {
+            MyOperationState::Start => {
+                let (page, completion) = start_read();
+                self.state = MyOperationState::WaitingForRead { page };
+                io_yield_one!(completion);
+            }
+            MyOperationState::WaitingForRead { page } => {
+                let data = page.get_contents();
+                self.state = MyOperationState::Processing { data: data.to_vec() };
+                // No yield — continue the loop immediately
+            }
+            MyOperationState::Processing { data } => {
+                let result = process(data);
+                self.state = MyOperationState::Done;
+                return Ok(IOResult::Done(result));
+            }
+            MyOperationState::Done => unreachable!(),
+        }
+    }
+}
+```
+
+The B-tree implementation in `core/storage/btree.rs` contains many examples of this pattern.
+
+## Re-entrancy: the critical pitfall
+
+Because a function returning `IO` will be called again from the top, **any state mutation that happens before a yield will execute multiple times**.
+
+<Warning>
+Mutating shared state before a yield point is the most common source of async bugs in Turso. The mutation runs once on the first call and again on every re-entry.
+</Warning>
+
+### Wrong
+
+```rust
+fn bad_example(&mut self) -> Result<IOResult<()>> {
+    self.counter += 1;  // BUG: incremented on every re-entry
+    return_if_io!(something_that_might_yield());
+    Ok(IOResult::Done(()))
+}
+```
+
+If `something_that_might_yield()` returns `IO`, the caller waits, then calls `bad_example()` again. `counter` is incremented a second time.
+
+### Correct: mutate after the yield
+
+```rust
+fn good_example(&mut self) -> Result<IOResult<()>> {
+    return_if_io!(something_that_might_yield());
+    self.counter += 1;  // Only reached once, after I/O completes
+    Ok(IOResult::Done(()))
+}
+```
+
+### Correct: use a state machine
+
+```rust
+enum State { Start, AfterIO }
+
+fn good_example(&mut self) -> Result<IOResult<()>> {
+    loop {
+        match self.state {
+            State::Start => {
+                self.state = State::AfterIO;
+                return_if_io!(something_that_might_yield());
+            }
+            State::AfterIO => {
+                self.counter += 1;  // Safe: only entered once
+                return Ok(IOResult::Done(()));
+            }
+        }
+    }
+}
+```
+
+### Common re-entrancy bugs
+
+| Pattern | Problem |
+|---------|----------|
+| `vec.push(x); return_if_io!(...)` | Vec grows on every re-entry |
+| `idx += 1; return_if_io!(...)` | Index advances multiple times |
+| `map.insert(k, v); return_if_io!(...)` | Duplicate inserts or silent overwrites |
+| `flag = true; return_if_io!(...)` | Usually harmless but should be audited |
+
+## Platform I/O backends
+
+Turso's I/O layer (`core/io/`) provides platform-specific backends behind a common interface:
+
+- **`io_uring`** (Linux) — submits I/O requests to the kernel ring and collects completions asynchronously; maximizes storage device throughput.
+- **Synchronous fallback** — for platforms without `io_uring`; blocks the thread but uses the same `Completion` API, so no code above the I/O layer needs to change.
+
+The choice of backend is transparent to the VDBE and storage layers — they always work with `Completion` objects and `IOResult` returns.
+
+## Polling completions
+
+The program loop can wait for completions in two ways:
+
+```rust
+// Busy-poll until done (blocks)
+io.wait_for_completion(&completion);
+
+// Check once and yield if not done
+if !completion.is_completed() {
+    return StepResult::IO;
+}
+```
+
+The second form is used inside the VDBE execution loop so control returns to the caller without blocking, enabling cooperative multitasking.
+
+## Why this enables cloud integration
+
+Because storage reads and writes always go through `Completion` objects, the I/O backend can be swapped out for one that performs networked I/O — fetching pages from object storage, streaming WAL frames to a remote replica — without any changes to the VDBE or B-tree code. The async model is what makes Turso's cloud sync and backup features possible.
+
+## Key source files
+
+| File | Contents |
+|------|----------|
+| `core/types.rs` | `IOResult`, `IOCompletions`, `return_if_io!`, `return_and_restore_if_io!` |
+| `core/io/completions.rs` | `Completion`, `CompletionGroup` |
+| `core/util.rs` | `io_yield_one!` macro |
+| `core/state_machine.rs` | Generic `StateMachine` wrapper |
+| `core/storage/btree.rs` | Many state machine examples |
+| `core/storage/pager.rs` | `CompletionGroup` usage examples |

@@ -1,0 +1,188 @@
+---
+title: "MCP Server"
+description: "Run tursodb as a Model Context Protocol server so AI assistants can query and modify your databases."
+---
+
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open standard that lets AI assistants call structured tools. `tursodb` includes a built-in MCP server so you can point any MCP-compatible client — Claude Code, Claude Desktop, Cursor, or a custom client — at a Turso database.
+
+## Starting the MCP server
+
+Pass the `--mcp` flag to start in server mode instead of the interactive shell. The server communicates over stdin/stdout using JSON-RPC.
+
+```bash
+tursodb your_database.db --mcp
+```
+
+To use an in-memory database (useful for testing):
+
+```bash
+tursodb --mcp
+```
+
+<Note>
+The MCP server does not print a prompt or banner. It reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout.
+</Note>
+
+## Available tools
+
+The server exposes nine tools that cover all common database operations.
+
+| Tool | Description | Required parameter |
+|------|-------------|--------------------|
+| `open_database` | Open or create a database file. Creates parent directories if needed. Use `:memory:` for an in-memory database. | `path` (string) |
+| `current_database` | Return the path of the currently open database. | — |
+| `list_tables` | List all user tables in the database. | — |
+| `describe_table` | Return column names, types, nullability, defaults, and primary key flags for a table. | `table_name` (string) |
+| `execute_query` | Execute a read-only `SELECT` query and return results. Only `SELECT` statements are accepted. | `query` (string) |
+| `insert_data` | Execute an `INSERT` statement. Only `INSERT` statements are accepted. | `query` (string) |
+| `update_data` | Execute an `UPDATE` statement. Only `UPDATE` statements are accepted. | `query` (string) |
+| `delete_data` | Execute a `DELETE` statement. Only `DELETE` statements are accepted. | `query` (string) |
+| `schema_change` | Execute `CREATE`, `ALTER`, or `DROP` statements to modify the schema. | `query` (string) |
+
+## Client configuration
+
+### Generic MCP configuration
+
+Most MCP clients accept a JSON configuration block. Replace the paths with the actual locations on your system.
+
+```json
+{
+  "mcpServers": {
+    "turso": {
+      "command": "/path/to/.turso/tursodb",
+      "args": ["/path/to/your/database.db", "--mcp"]
+    }
+  }
+}
+```
+
+### Claude Code
+
+Use the `claude mcp add` command to register the server:
+
+```bash
+claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
+```
+
+Breaking down the command:
+
+| Part | Meaning |
+|------|---------|
+| `my-database` | The name you assign to this MCP server |
+| `--` | Required separator between Claude options and your command |
+| `tursodb` | The Turso CLI binary |
+| `./path/to/your/database.db` | Path to your database file |
+| `--mcp` | Enables MCP server mode |
+
+<CodeGroup>
+```bash Local project database
+claude mcp add my-project-db -- tursodb ./data/app.db --mcp
+```
+
+```bash Absolute path
+claude mcp add analytics-db -- tursodb /Users/you/databases/analytics.db --mcp
+```
+
+```bash Local scope only
+claude mcp add project-db --local -- tursodb ./database.db --mcp
+```
+</CodeGroup>
+
+After adding the server, restart Claude Code to activate the connection.
+
+**Managing registered servers:**
+
+```bash
+# List all configured MCP servers
+claude mcp list
+
+# Inspect a specific server
+claude mcp get my-database
+
+# Remove a server
+claude mcp remove my-database
+```
+
+### Claude Desktop
+
+Add the configuration to your `claude_desktop_config.json` file:
+
+```json
+{
+  "mcpServers": {
+    "turso": {
+      "command": "/path/to/.turso/tursodb",
+      "args": ["./path/to/your/database.db", "--mcp"]
+    }
+  }
+}
+```
+
+<Note>
+Use the full path to `tursodb`. Claude Desktop may not resolve binaries from your `PATH`.
+</Note>
+
+### Cursor
+
+<Steps>
+  <Step title="Open Cursor settings">
+    Go to **Settings** inside Cursor.
+  </Step>
+  <Step title="Navigate to Extensions → MCP">
+    Find the MCP configuration section.
+  </Step>
+  <Step title="Add the server">
+    Configure:
+    - **Name**: `turso`
+    - **Command**: `/path/to/.turso/tursodb`
+    - **Args**: `["./path/to/your/database.db", "--mcp"]`
+  </Step>
+</Steps>
+
+Alternatively, add the server directly to your Cursor configuration file using the same JSON format shown for Claude Desktop.
+
+## Direct JSON-RPC usage
+
+You can drive the MCP server by piping JSON-RPC messages to it directly — useful for scripting or debugging.
+
+### In-memory database example
+
+```bash
+cat << 'EOF' | tursodb --mcp
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "schema_change", "arguments": {"query": "CREATE TABLE users (id INTEGER, name TEXT, email TEXT)"}}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "insert_data", "arguments": {"query": "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')"}}}
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "execute_query", "arguments": {"query": "SELECT * FROM users"}}}
+EOF
+```
+
+### Existing database file example
+
+```bash
+cat << 'EOF' | tursodb mydb.db --mcp
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
+EOF
+```
+
+### JSON-RPC methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Handshake required before calling any tools. |
+| `tools/list` | Returns the full list of available tools with their input schemas. |
+| `tools/call` | Call a specific tool. Params: `{"name": "tool_name", "arguments": {...}}`. |
+
+## Example prompts
+
+Once connected, you can ask your AI assistant in plain language:
+
+- "Show me all tables in the database."
+- "What's the schema for the `users` table?"
+- "Find all posts with more than 100 upvotes."
+- "Insert a new user with name 'Alice' and email 'alice@example.com'."
+- "Rename the `email` column to `email_address` in the `users` table."
+- "How many rows are in each table?"
+
+The assistant selects the appropriate tool (`list_tables`, `describe_table`, `execute_query`, `insert_data`, `schema_change`, etc.) and constructs the correct SQL automatically.

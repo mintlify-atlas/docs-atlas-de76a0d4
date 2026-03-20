@@ -1,0 +1,115 @@
+---
+title: "Fuzzy extension"
+description: "Fuzzy string matching, edit distance metrics, phonetic encoding, transliteration, and script detection functions."
+---
+
+The fuzzy extension provides functions for approximate string matching and phonetic analysis. It is adapted from the [sqlean fuzzy](https://github.com/nalgeon/sqlean/blob/main/docs/fuzzy.md) extension.
+
+## Edit distance functions
+
+Edit distance functions measure how similar two strings are by counting the minimum number of operations needed to transform one string into the other.
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `fuzzy_leven(A, B)` | `A`, `B` TEXT | INTEGER | Levenshtein distance between `A` and `B` (insertions, deletions, substitutions) |
+| `fuzzy_damlev(A, B)` | `A`, `B` TEXT | INTEGER | Damerau-Levenshtein distance (adds transpositions to Levenshtein) |
+| `fuzzy_editdist(A, B)` | `A`, `B` ASCII TEXT | INTEGER | Weighted edit distance; if `A` ends with `*`, treats it as a prefix of `B` |
+| `fuzzy_hamming(A, B)` | `A`, `B` TEXT (equal length) | INTEGER | Hamming distance; returns -1 if strings differ in length |
+| `fuzzy_osadist(A, B)` | `A`, `B` TEXT | INTEGER | Optimal String Alignment distance |
+| `fuzzy_jarowin(A, B)` | `A`, `B` TEXT | REAL | Jaro-Winkler similarity score between 0.0 (no match) and 1.0 (identical) |
+
+### Examples
+
+```sql
+-- Levenshtein: 1 substitution
+SELECT fuzzy_leven('kitten', 'sitten');
+-- 1
+
+-- Damerau-Levenshtein: transposition counts as 1 (vs 2 for Levenshtein)
+SELECT fuzzy_damlev('abc', 'acb');
+-- 1
+
+-- Hamming: number of positions that differ
+SELECT fuzzy_hamming('hello', 'hellp');
+-- 1
+
+-- Jaro-Winkler: similarity score
+SELECT fuzzy_jarowin('martha', 'marhta');
+-- ~0.961
+
+-- Find approximate matches within distance 2
+SELECT word FROM dictionary
+WHERE fuzzy_leven(word, 'colour') <= 2;
+```
+
+## Phonetic encoding functions
+
+Phonetic encoding functions convert words to codes that represent how they sound, so that words with similar pronunciations match even when spelled differently.
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `fuzzy_soundex(X)` | `X` TEXT | TEXT or NULL | Standard Soundex code (e.g. `P532` for `phonetics`) |
+| `fuzzy_rsoundex(X)` | `X` TEXT | TEXT or NULL | Refined Soundex — more granular than standard Soundex |
+| `fuzzy_phonetic(X)` | `X` TEXT | TEXT or NULL | Phonetic hash using an alternative phonetic algorithm |
+| `fuzzy_caver(X)` | `X` TEXT | TEXT or NULL | Caverphone encoding (10-character fixed-length code) |
+
+### Examples
+
+```sql
+-- Standard Soundex
+SELECT fuzzy_soundex('phonetics');
+-- P532
+
+SELECT fuzzy_soundex('awesome');
+-- A250
+
+-- Find names that sound like 'Smith'
+SELECT name FROM contacts
+WHERE fuzzy_soundex(name) = fuzzy_soundex('Smith');
+
+-- Refined Soundex
+SELECT fuzzy_rsoundex('phonetics');
+-- P1080603
+
+-- Caverphone
+SELECT fuzzy_caver('awesome');
+-- AWSM111111
+```
+
+## Transliteration and script functions
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `fuzzy_translit(X)` | `X` TEXT | TEXT | Converts non-ASCII Roman characters in `X` to their closest ASCII equivalents |
+| `fuzzy_script(X)` | `X` TEXT | INTEGER | Returns the ISO 15924 numeric code of the dominant script in `X` |
+
+### Script codes returned by `fuzzy_script`
+
+| Code | Script |
+|------|--------|
+| 125 | Hebrew |
+| 160 | Arabic |
+| 200 | Greek |
+| 215 | Latin |
+| 220 | Cyrillic |
+| 998 | Mixed (two or more scripts detected) |
+| 999 | Unknown (no recognized script) |
+
+### Examples
+
+```sql
+-- Transliterate accented characters
+SELECT fuzzy_translit('Ångström');
+-- Angstrom
+
+-- Detect script
+SELECT fuzzy_script('Hello');
+-- 215 (Latin)
+
+SELECT fuzzy_script('Привет');
+-- 220 (Cyrillic)
+```
+
+## NULL handling
+
+All fuzzy functions return NULL or an error value when a required argument is NULL. For phonetic functions, an empty string input returns an empty string.

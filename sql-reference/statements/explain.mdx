@@ -1,0 +1,155 @@
+---
+title: "EXPLAIN"
+description: "Display the bytecode or high-level query plan for a SQL statement without executing it."
+---
+
+The `EXPLAIN` statement displays information about how Turso executes a SQL statement without actually running it. There are two forms: `EXPLAIN` shows the virtual machine bytecode, and `EXPLAIN QUERY PLAN` shows the high-level query execution strategy.
+
+## Syntax
+
+```sql
+EXPLAIN statement;
+EXPLAIN QUERY PLAN statement;
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `statement` | Any SQL statement (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). |
+
+## EXPLAIN
+
+The `EXPLAIN` prefix causes Turso to return the sequence of virtual machine (VDBE) opcodes that would be used to execute the statement, rather than executing it.
+
+```sql
+EXPLAIN SELECT * FROM users WHERE id = 1;
+-- addr | opcode     | p1 | p2 | p3 | p4       | p5
+-- 0    | Init       | 0  | 9  | 0  |          | 0
+-- 1    | OpenRead   | 0  | 2  | 0  | 3        | 0
+-- 2    | SeekRowid  | 0  | 8  | 1  |          | 0
+-- ...
+```
+
+### Output columns
+
+| Column | Description |
+|--------|-------------|
+| `addr` | Instruction address (sequential integer). |
+| `opcode` | The operation name (e.g., `OpenRead`, `SeekRowid`, `Column`, `ResultRow`). |
+| `p1` | First operand. |
+| `p2` | Second operand. |
+| `p3` | Third operand. |
+| `p4` | Fourth operand (often a string value such as table name or collation). |
+| `p5` | Fifth operand (flags). |
+
+The VDBE bytecode is the same format as SQLite's. Turso's bytecode output is useful for deep compatibility comparisons or debugging the query compiler.
+
+## EXPLAIN QUERY PLAN
+
+Provides a high-level description of the strategy the query optimizer chose for executing a statement. This form is more useful than raw `EXPLAIN` for understanding query performance.
+
+```sql
+EXPLAIN QUERY PLAN SELECT * FROM users WHERE name = 'Alice';
+-- id | parent | notused | detail
+-- 2  | 0      | 0       | SCAN users
+```
+
+```sql
+CREATE INDEX idx_name ON users(name);
+EXPLAIN QUERY PLAN SELECT * FROM users WHERE name = 'Alice';
+-- id | parent | notused | detail
+-- 3  | 0      | 0       | SEARCH users USING INDEX idx_name (name=?)
+```
+
+### Output columns
+
+| Column | Description |
+|--------|-------------|
+| `id` | A unique identifier for this step. |
+| `parent` | The `id` of the parent step (`0` for top-level). |
+| `notused` | Reserved for future use (always `0`). |
+| `detail` | Human-readable description of the execution step. |
+
+### Common detail messages
+
+| Detail pattern | Meaning |
+|----------------|--------|
+| `SCAN table` | Full table scan (no index used). |
+| `SEARCH table USING INDEX idx (col=?)` | Index lookup on the specified column. |
+| `SEARCH table USING INTEGER PRIMARY KEY (rowid=?)` | Direct rowid lookup. |
+| `USE TEMP B-TREE FOR ORDER BY` | A temporary B-tree is used for sorting. |
+| `USE TEMP B-TREE FOR DISTINCT` | A temporary B-tree is used for deduplication. |
+| `COMPOUND SUBQUERY` | Indicates a `UNION`, `INTERSECT`, or `EXCEPT`. |
+| `CORRELATED SCALAR SUBQUERY` | A correlated subquery that returns a single value. |
+| `LIST SUBQUERY` | A subquery used with `IN`. |
+
+## Examples
+
+### Comparing query plans
+
+```sql
+CREATE TABLE orders (
+    id INTEGER PRIMARY KEY,
+    customer_id INTEGER,
+    total REAL
+);
+
+-- Without index: full table scan
+EXPLAIN QUERY PLAN SELECT * FROM orders WHERE customer_id = 42;
+-- SCAN orders
+
+-- After creating an index
+CREATE INDEX idx_customer ON orders(customer_id);
+EXPLAIN QUERY PLAN SELECT * FROM orders WHERE customer_id = 42;
+-- SEARCH orders USING INDEX idx_customer (customer_id=?)
+```
+
+### Join order
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT o.id, c.name
+FROM orders o
+INNER JOIN customers c ON c.id = o.customer_id
+WHERE c.name = 'Alice';
+-- SCAN orders AS o
+-- SEARCH customers AS c USING INTEGER PRIMARY KEY (rowid=?)
+```
+
+### Subqueries
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT * FROM orders
+WHERE customer_id IN (SELECT id FROM customers WHERE active = 1);
+-- SCAN orders
+-- LIST SUBQUERY
+--   SCAN customers
+```
+
+### Reading EXPLAIN bytecode
+
+```sql
+EXPLAIN SELECT name FROM employees WHERE id = 5;
+```
+
+Key opcodes you will see in output:
+
+| Opcode | Meaning |
+|--------|---------|
+| `Init` | Entry point; jumps to the main program. |
+| `OpenRead` | Opens a cursor on a table or index for reading. |
+| `SeekRowid` | Positions the cursor on a row by rowid. |
+| `Column` | Reads a column value from the current cursor position. |
+| `ResultRow` | Emits a result row to the caller. |
+| `Halt` | Ends program execution. |
+| `Next` | Advances the cursor to the next row. |
+| `Filter` | Evaluates a filter condition (used in modern SQLite bytecode). |
+
+<Tip>
+Use `EXPLAIN QUERY PLAN` when tuning query performance. Use `EXPLAIN` only when you need to inspect the exact bytecode, such as when comparing Turso's output against SQLite for compatibility testing.
+</Tip>
+
+## See also
+
+- [CREATE INDEX](/sql-reference/statements/create-index) — create indexes to speed up queries
+- [SELECT](/sql-reference/statements/select) — the statement most commonly analyzed with EXPLAIN

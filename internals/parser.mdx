@@ -1,0 +1,116 @@
+---
+title: "Parser"
+description: "How Turso parses SQL text into an abstract syntax tree using a recursive descent parser."
+---
+
+The parser is responsible for turning raw SQL text into an abstract syntax tree (AST) that the code generator can work with. It lives in `parser/src/parser.rs` and is approximately 11,000 lines of recursive descent parsing code.
+
+## Background
+
+Turso's parser is an in-tree fork of [lemon-rs](https://github.com/gwenn/lemon-rs), which is itself a port of the SQLite parser (originally written using the Lemon parser generator) into Rust. The parser produces the same AST shape that SQLite's grammar defines, so Turso stays compatible with SQLite's SQL dialect.
+
+## Source files
+
+| File | Purpose |
+|------|---------|
+| `parser/src/parser.rs` | Main recursive descent parser (~11k LOC) |
+| `parser/src/lexer.rs` | Tokenizer: bytes → `TokenType` stream |
+| `parser/src/token.rs` | `TokenType` enum — all SQL tokens |
+| `parser/src/ast.rs` | AST node types for all statements and expressions |
+| `parser/src/error.rs` | Parse error types |
+| `parser/src/lib.rs` | Public crate entry point |
+
+## The lexer
+
+The lexer (`parser/src/lexer.rs`) converts a byte slice into a stream of typed tokens. It:
+
+- Recognizes SQL keywords case-insensitively (`SELECT`, `FROM`, `WHERE`, etc.) via a lookup table.
+- Emits a `TK_ID` token for unrecognized identifiers.
+- Handles string literals (single-quoted), blob literals (`x'...'`), numeric literals, and operators.
+- Reports the byte offset of each token so parse errors can include position information.
+
+```rust
+// Keyword lookup returns a TokenType or TK_ID for user identifiers
+fn keyword_or_id_token(input: &[u8]) -> TokenType {
+    match_ignore_ascii_case!(match input {
+        b"SELECT" => TokenType::TK_SELECT,
+        b"FROM"   => TokenType::TK_FROM,
+        b"WHERE"  => TokenType::TK_WHERE,
+        // ... 150+ keywords
+        _ => TokenType::TK_ID,
+    })
+}
+```
+
+## The parser
+
+The parser is a hand-written recursive descent parser. Each grammar production has a corresponding function. The entry points handle the full statement grammar:
+
+- `cmd()` — parses a single SQL command and returns a `Cmd`.
+- `Cmd::Stmt(stmt)` — a DML/DDL/query statement.
+- `Cmd::Explain(stmt)` / `Cmd::ExplainQueryPlan(stmt)` — `EXPLAIN` variants.
+
+The parser calls the lexer incrementally and builds the AST bottom-up. There is no separate parse tree — the parser constructs the final AST directly.
+
+## AST structure
+
+All AST node types are defined in `parser/src/ast.rs`. The root type for a complete statement is `Stmt`. Some key variants:
+
+```rust
+pub enum Stmt {
+    Select(Box<Select>),
+    Insert { ... },
+    Update { ... },
+    Delete { ... },
+    CreateTable { ... },
+    CreateIndex { ... },
+    DropTable { ... },
+    // ... and more
+}
+```
+
+Expressions are represented by the `Expr` enum, which covers literals, column references, binary/unary operators, function calls, subqueries, and more:
+
+```rust
+pub enum Expr {
+    Literal(Literal),          // 42, 'hello', NULL, x'...
+    Column { .. },             // table.column reference
+    BinaryOp { op, lhs, rhs }, // a + b, x = y
+    FunctionCall { name, args },
+    Subquery(Box<Select>),
+    // ...
+}
+```
+
+## SQLite grammar compatibility
+
+The parser targets full SQLite grammar compatibility. It recognizes all SQLite statement types including:
+
+- DML: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `UPSERT`
+- DDL: `CREATE`/`DROP`/`ALTER TABLE`, `CREATE`/`DROP INDEX`, `CREATE VIEW`, `CREATE TRIGGER`
+- Transactions: `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE`
+- Administrative: `PRAGMA`, `ATTACH`, `DETACH`, `ANALYZE`, `VACUUM`
+- Special: `EXPLAIN`, `EXPLAIN QUERY PLAN`, `WITH` (CTEs), window functions
+
+<Note>
+Turso also adds a `CONCURRENT` keyword for use with `BEGIN CONCURRENT`, which is specific to the MVCC journal mode.
+</Note>
+
+## Error handling
+
+Parse errors are returned as `Error` values from `parser/src/error.rs`. The parser does not attempt recovery — on a syntax error it returns immediately with a description of the unexpected token and the byte offset where parsing failed.
+
+The design follows the SQLite approach: prepare-time errors (including parse errors) are surfaced before any execution begins, so no partial state is left behind.
+
+## How the AST flows downstream
+
+Once the parser produces a `Cmd::Stmt(stmt)`, the `Connection` passes it to `core/translate/` for code generation:
+
+```
+parser::Parser::next() → Cmd::Stmt
+    └─► core/translate::translate(stmt) → Program
+```
+
+The translator does not modify the AST in place; it traverses it to emit VDBE bytecode instructions. The query optimizer runs as part of this translation step, on an intermediate `Plan` representation, before bytecode is emitted.
+
+See [Query optimizer](/internals/query-optimizer) and [Virtual machine](/internals/virtual-machine) for what happens next.

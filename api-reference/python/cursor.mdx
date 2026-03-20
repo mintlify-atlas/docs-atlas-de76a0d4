@@ -1,0 +1,171 @@
+---
+title: "Cursor"
+description: "Execute SQL statements and fetch result rows."
+---
+
+A `Cursor` is obtained by calling `connection.cursor()`. It holds the state for a single executing statement and the rows it has produced.
+
+```python
+cur = conn.cursor()
+```
+
+## `cursor.execute(sql, parameters?)`
+
+Executes a single SQL statement.
+
+```python
+cur.execute("SELECT * FROM users WHERE id = ?", (1,))
+row = cur.fetchone()
+```
+
+<ParamField path="sql" type="str" required>
+  The SQL statement. Only one statement is allowed per call; passing multiple statements raises `ProgrammingError`.
+</ParamField>
+<ParamField path="parameters" type="Sequence" default="()">
+  Positional bind parameters. Each `?` placeholder is replaced in order.
+
+  <Note>
+    Named parameters (`:name` or `@name`) are not supported. Use `?` placeholders only.
+  </Note>
+</ParamField>
+
+**Returns** `Cursor` (self)
+
+For DML statements (INSERT, UPDATE, DELETE), `cursor.rowcount` is updated after execution. For SELECT statements, `cursor.description` is set immediately.
+
+## `cursor.executemany(sql, seq_of_parameters)`
+
+Executes a DML statement once for each element in `seq_of_parameters`. Only INSERT, UPDATE, DELETE, and REPLACE are accepted; passing any other statement type raises `ProgrammingError`.
+
+```python
+users = [("Alice",), ("Bob",), ("Carol",)]
+cur.executemany("INSERT INTO users (name) VALUES (?)", users)
+conn.commit()
+```
+
+<ParamField path="sql" type="str" required>
+  A DML statement.
+</ParamField>
+<ParamField path="seq_of_parameters" type="Iterable[Sequence]" required>
+  An iterable of parameter tuples, one per execution.
+</ParamField>
+
+**Returns** `Cursor` (self)
+
+After `executemany`, `cursor.rowcount` holds the total number of rows affected across all iterations.
+
+## `cursor.executescript(sql_script)`
+
+Executes a multi-statement SQL script. Any open transaction is committed before the script runs, matching `sqlite3` behavior.
+
+```python
+cur.executescript("""
+    CREATE TABLE a (x INTEGER);
+    CREATE TABLE b (y TEXT);
+    INSERT INTO a VALUES (1);
+""")
+```
+
+<ParamField path="sql_script" type="str" required>
+  One or more semicolon-separated SQL statements.
+</ParamField>
+
+**Returns** `Cursor` (self)
+
+## `cursor.fetchone()`
+
+Fetches the next row from the result set, or `None` if no more rows are available.
+
+```python
+cur.execute("SELECT id, name FROM users")
+row = cur.fetchone()
+if row is not None:
+    print(row[0], row[1])  # (1, 'Alice')
+```
+
+**Returns** `tuple | Row | None` — a row value (plain tuple by default, or the object returned by `row_factory` if set), or `None`.
+
+## `cursor.fetchall()`
+
+Fetches all remaining rows from the result set.
+
+```python
+cur.execute("SELECT id, name FROM users")
+rows = cur.fetchall()
+for row in rows:
+    print(row)
+```
+
+**Returns** `list[tuple | Row]` — an empty list if no rows remain.
+
+## `cursor.fetchmany(size?)`
+
+Fetches up to `size` rows. Defaults to `cursor.arraysize` when `size` is not provided.
+
+```python
+cur.execute("SELECT id, name FROM users")
+batch = cur.fetchmany(10)
+```
+
+<ParamField path="size" type="int">
+  Maximum number of rows to return. Defaults to `cursor.arraysize` (initially `1`).
+</ParamField>
+
+**Returns** `list[tuple | Row]`
+
+## `cursor.close()`
+
+Finalizes the active statement and marks the cursor as closed. Any further use raises `ProgrammingError`.
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `cursor.description` | `tuple \| None` | A 7-tuple per column: `(name, None, None, None, None, None, None)`. `None` when the last statement produced no columns. |
+| `cursor.rowcount` | `int` | Number of rows affected by the last DML statement. `-1` for SELECT or when unknown. |
+| `cursor.lastrowid` | `int \| None` | Rowid of the last inserted row. Set only after INSERT or REPLACE. |
+| `cursor.arraysize` | `int` | Default batch size for `fetchmany()`. Defaults to `1`. |
+| `cursor.connection` | `Connection` | The owning connection. |
+| `cursor.row_factory` | `callable \| None` | Optional factory called with `(cursor, row_tuple)` to transform row objects. Inherited from `connection.row_factory` at cursor creation. |
+
+## Row representation
+
+By default rows are plain Python tuples:
+
+```python
+cur.execute("SELECT id, name FROM users")
+row = cur.fetchone()
+print(row)       # (1, 'Alice')
+print(row[0])    # 1
+print(row[1])    # 'Alice'
+```
+
+Set `connection.row_factory` (or `cursor.row_factory`) to `turso.Row` to get sqlite3-compatible named access:
+
+```python
+import turso
+
+conn = turso.connect(":memory:")
+conn.row_factory = turso.Row
+
+conn.execute("CREATE TABLE t (id INTEGER, name TEXT)")
+conn.execute("INSERT INTO t VALUES (1, 'Alice')")
+
+cur = conn.execute("SELECT id, name FROM t")
+row = cur.fetchone()
+
+print(row["name"])   # 'Alice'
+print(row[0])        # 1
+print(row.keys())    # ['id', 'name']
+```
+
+`turso.Row` supports both integer and string indexing, iteration, `len()`, and equality comparison.
+
+## Iteration
+
+`Cursor` is an iterator. You can loop directly over it after `execute()`:
+
+```python
+for row in conn.execute("SELECT id, name FROM users"):
+    print(row)
+```

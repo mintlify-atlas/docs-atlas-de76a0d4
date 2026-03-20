@@ -1,0 +1,64 @@
+---
+title: "DROP TABLE"
+description: "Remove a table and all its data, indexes, triggers, and constraints from the database."
+---
+
+Permanently removes a table definition and all data stored in the table.
+
+## Syntax
+
+```sql
+DROP TABLE [IF EXISTS] [schema_name.]table_name;
+```
+
+## Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `IF EXISTS` | Prevents an error if the table does not exist. The statement is a no-op when the table is absent. |
+| `schema_name` | The name of the attached database containing the table. Defaults to the main database if omitted. |
+| `table_name` | The name of the table to drop. |
+
+## Description
+
+`DROP TABLE` permanently removes a table definition along with all data stored in the table. All indexes, triggers, and constraints associated with the table are also removed.
+
+### Behavior
+
+- All rows in the table are deleted.
+- All indexes built on the table are removed.
+- All triggers associated with the table are removed.
+- The table entry is removed from the `sqlite_schema` system table.
+- If foreign key constraints in other tables reference the dropped table, those references become invalid. Turso does not prevent dropping a table that is referenced by foreign keys elsewhere.
+- `DROP TABLE` is not allowed while the table is being read or written by another statement in the same connection.
+
+<Warning>
+`DROP TABLE` is irreversible. All data in the table is permanently lost. If you only want to remove rows while keeping the table structure, use [`DELETE`](/sql-reference/statements/delete) instead.
+</Warning>
+
+## Examples
+
+### Drop a table
+
+```sql
+DROP TABLE users;
+```
+
+### Drop a table only if it exists
+
+```sql
+DROP TABLE IF EXISTS temporary_results;
+```
+
+### Drop a table in an attached database
+
+```sql
+DROP TABLE aux.sessions;
+```
+
+## See also
+
+- [CREATE TABLE](/sql-reference/statements/create-table) — create a new table
+- [ALTER TABLE](/sql-reference/statements/alter-table) — modify an existing table
+- [DELETE](/sql-reference/statements/delete) — remove rows without dropping the table
+- [DROP INDEX](/sql-reference/statements/drop-index) — remove an index

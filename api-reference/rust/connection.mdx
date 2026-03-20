@@ -1,0 +1,176 @@
+---
+title: "Connection"
+description: "An open connection to a Turso database. Execute queries, manage transactions, and prepare statements."
+---
+
+A `Connection` is obtained by calling `db.connect()`. Each connection has its own transaction state. Multiple connections to the same `Database` are supported and can run concurrently.
+
+```rust
+let conn = db.connect()?;
+```
+
+## `db.connect()`
+
+Opens a new connection to the database.
+
+**Returns** `Result<Connection>`
+
+## `conn.query(sql, params)`
+
+Prepares and executes a SQL statement and returns a `Rows` iterator. Designed for SELECT and any statement that returns rows.
+
+```rust
+let mut rows = conn.query("SELECT id, name FROM users WHERE id = ?", [1_i64]).await?;
+while let Some(row) = rows.next().await? {
+    let id: i64 = row.get(0)?;
+    let name: String = row.get(1)?;
+}
+```
+
+<ParamField path="sql" type="impl AsRef<str>" required>
+  The SQL statement to execute.
+</ParamField>
+<ParamField path="params" type="impl IntoParams" required>
+  Bind parameters. Pass `()` for no parameters, a slice/array for positional parameters, or `turso::params::Params::Named` for named parameters.
+</ParamField>
+
+**Returns** `Result<Rows>`
+
+## `conn.execute(sql, params)`
+
+Prepares and executes a SQL statement, discarding any rows. Returns the number of rows affected.
+
+```rust
+let affected = conn
+    .execute("DELETE FROM users WHERE id = ?", [42_i64])
+    .await?;
+println!("{affected} row(s) deleted");
+```
+
+<ParamField path="sql" type="impl AsRef<str>" required>
+  The SQL statement to execute.
+</ParamField>
+<ParamField path="params" type="impl IntoParams" required>
+  Bind parameters.
+</ParamField>
+
+**Returns** `Result<u64>` — number of rows affected.
+
+## `conn.execute_batch(sql)`
+
+Executes a semicolon-separated batch of SQL statements. Useful for DDL scripts.
+
+```rust
+conn.execute_batch("
+    CREATE TABLE a (x INTEGER);
+    CREATE TABLE b (y TEXT);
+").await?;
+```
+
+<ParamField path="sql" type="impl AsRef<str>" required>
+  One or more SQL statements separated by semicolons.
+</ParamField>
+
+**Returns** `Result<()>`
+
+## `conn.prepare(sql)`
+
+Compiles a SQL statement into a reusable `Statement`.
+
+```rust
+let mut stmt = conn.prepare("INSERT INTO users (email) VALUES (?)").await?;
+stmt.execute(["bob@example.org"]).await?;
+stmt.execute(["carol@example.org"]).await?;
+```
+
+<ParamField path="sql" type="impl AsRef<str>" required>
+  The SQL statement to compile.
+</ParamField>
+
+**Returns** `Result<Statement>` — see [Statement](/api-reference/rust/statement).
+
+## `conn.prepare_cached(sql)`
+
+Same as `prepare`, but caches the compiled statement on the connection for re-use.
+
+**Returns** `Result<Statement>`
+
+## Transactions
+
+Transactions are created from a mutable connection reference. The transaction `Deref`s to `Connection`, so you can call `query` and `execute` on it directly.
+
+```rust
+let mut conn = db.connect()?;
+let tx = conn.transaction().await?;
+
+tx.execute("INSERT INTO users (email) VALUES (?)", ["dave@example.org"]).await?;
+tx.execute("INSERT INTO users (email) VALUES (?)", ["eve@example.org"]).await?;
+
+tx.commit().await?;
+```
+
+### `conn.transaction()`
+
+Begins a new `DEFERRED` transaction.
+
+**Returns** `Result<Transaction<'_>>`
+
+### `conn.transaction_with_behavior(behavior)`
+
+Begins a transaction with an explicit behavior.
+
+<ParamField path="behavior" type="TransactionBehavior" required>
+  One of `TransactionBehavior::Deferred`, `TransactionBehavior::Immediate`, or `TransactionBehavior::Exclusive`.
+</ParamField>
+
+**Returns** `Result<Transaction<'_>>`
+
+### `conn.unchecked_transaction()`
+
+Begins a transaction without requiring `&mut self`. Attempting to open a nested transaction will return an error at runtime.
+
+**Returns** `Result<Transaction<'_>>`
+
+### `conn.set_transaction_behavior(behavior)`
+
+Changes the default transaction behavior used by `conn.transaction()` and `conn.unchecked_transaction()`.
+
+### Transaction methods
+
+| Method | Description |
+|---|---|
+| `tx.commit().await` | Commit the transaction |
+| `tx.rollback().await` | Roll back the transaction |
+| `tx.finish().await` | Commit or roll back according to the `DropBehavior` setting |
+| `tx.set_drop_behavior(behavior)` | Control what happens when `Transaction` is dropped |
+| `tx.drop_behavior()` | Return the current `DropBehavior` |
+
+Transactions roll back by default when dropped without calling `commit()` or `finish()`.
+
+## Pragma helpers
+
+### `conn.pragma_query(name, callback)`
+
+Runs `PRAGMA <name>` and calls `callback` for each returned row.
+
+```rust
+conn.pragma_query("journal_mode", |row| {
+    println!("journal mode: {:?}", row.get_value(0));
+    Ok(())
+}).await?;
+```
+
+### `conn.pragma_update(name, value)`
+
+Runs `PRAGMA <name> = <value>` and returns any rows produced.
+
+**Returns** `Result<Vec<Row>>`
+
+## Other methods
+
+| Method | Returns | Description |
+|---|---|---|
+| `conn.last_insert_rowid()` | `i64` | Rowid of the last inserted row |
+| `conn.is_autocommit()` | `Result<bool>` | Whether the connection is in autocommit mode |
+| `conn.busy_timeout(duration)` | `Result<()>` | Set how long to retry a busy database before returning an error |
+| `conn.cacheflush()` | `Result<()>` | Flush dirty pages to the WAL |

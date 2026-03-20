@@ -1,0 +1,175 @@
+---
+title: "Transactions"
+description: "Deferred, immediate, and concurrent transaction types in Turso, with lifecycle details and best practices."
+---
+
+A transaction is a sequence of one or more SQL statements that execute as a single, atomic unit of work. Transactions ensure **atomicity** and **isolation**: either all statements execute or none do, and concurrent transactions do not interfere with each other.
+
+Each connection can have exactly one active transaction at a time. All statements prepared on a connection belong to the same transaction context. When you need concurrency — including `BEGIN CONCURRENT` — you must use different connections, not parallel statements within the same connection.
+
+Turso supports three transaction types: **deferred**, **immediate/exclusive**, and **concurrent**.
+
+## Syntax
+
+```sql
+BEGIN [ DEFERRED | IMMEDIATE | EXCLUSIVE | CONCURRENT ] [ TRANSACTION ]
+
+COMMIT [ TRANSACTION ]
+
+END [ TRANSACTION ]
+
+ROLLBACK [ TRANSACTION ]
+```
+
+## Transaction types
+
+| Type | When to use |
+|------|-------------|
+| `DEFERRED` (default) | General read/write workloads where write latency is acceptable |
+| `IMMEDIATE` | When you need an exclusive write lock from the start |
+| `EXCLUSIVE` | Alias for `IMMEDIATE` in Turso |
+| `CONCURRENT` | MVCC mode only — maximum write throughput with optimistic concurrency |
+
+## Deferred transactions
+
+A deferred transaction starts in a suspended state and acquires no snapshot or locks until the first SQL statement runs.
+
+<Steps>
+  <Step title="BEGIN DEFERRED">
+    No lock is acquired. The transaction is suspended.
+
+    ```sql
+    BEGIN DEFERRED TRANSACTION;
+    -- or simply:
+    BEGIN;
+    ```
+  </Step>
+  <Step title="First read statement">
+    A read transaction begins. Multiple read transactions can coexist concurrently.
+
+    ```sql
+    SELECT * FROM orders WHERE status = 'pending';
+    ```
+  </Step>
+  <Step title="First write statement">
+    The read transaction upgrades to a write transaction, or a write transaction begins directly. Only one write transaction is allowed at a time. A concurrent write fails with `SQLITE_BUSY`.
+
+    ```sql
+    UPDATE orders SET status = 'processing' WHERE id = 42;
+    ```
+  </Step>
+  <Step title="COMMIT or ROLLBACK">
+    Commit the transaction to persist changes, or roll back to discard them.
+
+    ```sql
+    COMMIT;
+    -- or:
+    ROLLBACK;
+    ```
+  </Step>
+</Steps>
+
+### Automatic restart behavior
+
+If a deferred transaction has performed no reads or writes yet, and another write transaction commits concurrently, the database automatically restarts the deferred transaction. However, once a deferred transaction has already performed reads, it cannot be automatically restarted — the application must manually roll back and retry.
+
+<Note>
+If your deferred transaction receives a `SQLITE_BUSY` error after reads have occurred, roll back the transaction and retry from the beginning.
+</Note>
+
+## Immediate and exclusive transactions
+
+An immediate transaction acquires a reserved write lock as soon as `BEGIN IMMEDIATE` executes. This prevents other write transactions from starting, while still allowing reads.
+
+```sql
+BEGIN IMMEDIATE TRANSACTION;
+
+-- Other connections can still read, but cannot start writes
+INSERT INTO audit_log (event) VALUES ('schema migration started');
+
+COMMIT;
+```
+
+<Note>
+`EXCLUSIVE` is always an alias for `IMMEDIATE` in Turso, matching SQLite's behavior in WAL mode.
+</Note>
+
+If another write transaction is already active when `BEGIN IMMEDIATE` executes, the statement fails immediately with `SQLITE_BUSY`.
+
+## Concurrent transactions (MVCC only)
+
+Concurrent transactions are only available when the database is running in [MVCC journal mode](/features/journal-modes). They use optimistic concurrency control to allow multiple transactions to read and write simultaneously.
+
+```sql
+BEGIN CONCURRENT TRANSACTION;
+```
+
+### Lifecycle
+
+When `BEGIN CONCURRENT` executes, the database:
+
+1. Assigns a unique transaction ID
+2. Records a begin timestamp from the logical clock
+3. Creates an empty read set and write set to track accessed rows
+4. Acquires **no locks**
+
+### Snapshot isolation
+
+Each concurrent transaction reads from a consistent snapshot of the database as of its begin timestamp:
+
+- Reads see all data committed before the transaction's begin timestamp
+- Reads do **not** see writes from other transactions that commit after this transaction starts
+- Reads within the same transaction are consistent (repeatable reads)
+- Multiple concurrent transactions can read and write simultaneously without blocking each other
+
+All rows read by the transaction are tracked in the read set; all rows written are tracked in the write set.
+
+### Commit and conflict detection
+
+When a concurrent transaction commits, the database performs these steps in order:
+
+<Steps>
+  <Step title="Exclusive transaction check">
+    If an active exclusive transaction exists (started with `BEGIN IMMEDIATE` or a deferred transaction that upgraded to a write transaction), the concurrent transaction **cannot commit** and receives `SQLITE_BUSY`. Concurrent transactions can still read and write while an exclusive transaction is active — they just cannot commit until it completes.
+  </Step>
+  <Step title="Write-write conflict detection">
+    For each row in the write set, the database checks whether the row was modified by another transaction. A conflict occurs when:
+
+    - The row is currently being modified by another active transaction, or
+    - The row was modified by a transaction that committed after this transaction's begin timestamp
+  </Step>
+  <Step title="Commit or abort">
+    If no conflicts are detected, the transaction commits. All row versions in the write set have their begin timestamps updated to the commit timestamp, making them visible to future transactions.
+
+    If a conflict is detected, the transaction fails with `SQLITE_BUSY` and must be rolled back and retried.
+  </Step>
+</Steps>
+
+### Interaction with exclusive transactions
+
+| Situation | Result |
+|-----------|--------|
+| Exclusive transaction is active, concurrent transaction reads | Allowed |
+| Exclusive transaction is active, concurrent transaction writes | Allowed |
+| Exclusive transaction is active, concurrent transaction commits | `SQLITE_BUSY` — wait for exclusive to finish |
+| Concurrent commit has write-write conflict | `SQLITE_BUSY` — roll back and retry |
+
+### Retry pattern
+
+```sql
+-- Connection 1 (MVCC mode)
+BEGIN CONCURRENT;
+SELECT balance FROM accounts WHERE id = 1;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+-- COMMIT may return SQLITE_BUSY if there's a write-write conflict
+COMMIT;
+-- If SQLITE_BUSY: ROLLBACK; then retry the full transaction
+```
+
+## Best practices
+
+- For maximum concurrency in MVCC mode, use `BEGIN CONCURRENT` for all write transactions. Only use `BEGIN IMMEDIATE` when you need to guarantee exclusive write access, such as during schema changes.
+- Keep transactions short to reduce lock contention and conflict probability.
+- Always handle `SQLITE_BUSY` in application code when using concurrent transactions. Implement exponential backoff before retrying.
+- Do not interleave statement execution across different transactions on a single connection. Use separate connections for concurrent workloads.
+- `AUTOINCREMENT` is not supported in MVCC mode. Use `INTEGER PRIMARY KEY` without `AUTOINCREMENT` instead.

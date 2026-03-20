@@ -1,0 +1,102 @@
+---
+title: "Crypto extension"
+description: "Cryptographic hash functions (MD5, SHA-1, SHA-256, SHA-384, SHA-512, BLAKE3) and binary encoding/decoding (hex, base64, base32, base85, URL) for SQL."
+---
+
+The crypto extension provides functions for computing cryptographic hashes and for encoding or decoding binary data. All functions are available automatically — no setup is required.
+
+## Hash functions
+
+Each hash function accepts a single argument of any non-null type (TEXT, BLOB, INTEGER, or REAL) and returns the hash as a BLOB.
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `crypto_md5(X)` | `X` — value to hash | BLOB | MD5 hash of `X` |
+| `crypto_sha1(X)` | `X` — value to hash | BLOB | SHA-1 hash of `X` |
+| `crypto_sha256(X)` | `X` — value to hash | BLOB | SHA-256 hash of `X` |
+| `crypto_sha384(X)` | `X` — value to hash | BLOB | SHA-384 hash of `X` |
+| `crypto_sha512(X)` | `X` — value to hash | BLOB | SHA-512 hash of `X` |
+| `crypto_blake3(X)` | `X` — value to hash | BLOB | BLAKE3 hash of `X` |
+
+<Warning>
+  MD5 and SHA-1 are cryptographically broken. Do not use them for security-sensitive purposes such as password storage or digital signatures. They remain useful for checksums and non-security fingerprinting.
+</Warning>
+
+### Examples
+
+Compute a SHA-256 hash and encode the result as hex:
+
+```sql
+SELECT crypto_encode(crypto_sha256('hello'), 'hex');
+-- 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+```
+
+Compute a BLAKE3 hash:
+
+```sql
+SELECT crypto_encode(crypto_blake3('hello'), 'hex');
+```
+
+Hash a column value:
+
+```sql
+SELECT id, crypto_encode(crypto_sha256(password), 'hex') AS hash
+FROM users;
+```
+
+## Encoding functions
+
+Use `crypto_encode` and `crypto_decode` to convert between binary data and text representations.
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `crypto_encode(X, format)` | `X` — data to encode; `format` — encoding name | TEXT | Encodes `X` using the specified format |
+| `crypto_decode(X, format)` | `X` — encoded text; `format` — encoding name | TEXT | Decodes `X` from the specified format |
+
+### Supported formats
+
+| Format | Description |
+|--------|-------------|
+| `'hex'` | Hexadecimal (lowercase) |
+| `'base64'` | Standard Base64 |
+| `'base32'` | Base32 |
+| `'base85'` | ASCII85 (without `<~` / `~>` delimiters) |
+| `'url'` | URL percent-encoding |
+
+### Examples
+
+Encode a string as base64:
+
+```sql
+SELECT crypto_encode('hello world', 'base64');
+-- aGVsbG8gd29ybGQ=
+```
+
+Decode a base64 string:
+
+```sql
+SELECT crypto_decode('aGVsbG8gd29ybGQ=', 'base64');
+-- hello world
+```
+
+Encode a hash as hex in one step:
+
+```sql
+SELECT crypto_encode(crypto_sha256('turso'), 'hex');
+```
+
+URL-encode a query parameter:
+
+```sql
+SELECT crypto_encode('hello world & more', 'url');
+-- hello%20world%20%26%20more
+```
+
+## NULL handling
+
+All functions return an error value when given a NULL argument. Use `COALESCE` if you need to handle nullable columns:
+
+```sql
+SELECT crypto_encode(crypto_sha256(COALESCE(data, '')), 'hex')
+FROM documents;
+```

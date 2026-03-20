@@ -1,0 +1,39 @@
+---
+title: "Extensions"
+description: "Built-in SQL extensions that add cryptographic hashing, pattern matching, CSV import, fuzzy string matching, IP address utilities, and statistical aggregates."
+---
+
+Turso ships with a set of built-in extensions that are compiled directly into the binary. All extension functions are available automatically — no `load_extension()` call or dynamic library is required.
+
+## Available extensions
+
+| Extension | Functions | Description |
+|-----------|-----------|-------------|
+| [Crypto](/extensions/crypto) | `crypto_md5`, `crypto_sha1`, `crypto_sha256`, `crypto_sha384`, `crypto_sha512`, `crypto_blake3`, `crypto_encode`, `crypto_decode` | Cryptographic hash functions and binary encoding/decoding |
+| [Regexp](/extensions/regexp) | `regexp`, `regexp_like`, `regexp_substr`, `regexp_replace`, `regexp_capture` | Regular expression matching, extraction, and replacement |
+| [CSV](/extensions/csv) | `csv` virtual table | Query CSV files and inline CSV data as SQL tables |
+| [Fuzzy](/extensions/fuzzy) | `fuzzy_leven`, `fuzzy_damlev`, `fuzzy_editdist`, `fuzzy_hamming`, `fuzzy_jarowin`, `fuzzy_osadist`, `fuzzy_soundex`, `fuzzy_phonetic`, `fuzzy_caver`, `fuzzy_rsoundex`, `fuzzy_translit`, `fuzzy_script` | Fuzzy string similarity, phonetic encoding, and transliteration |
+| [IP Address](/extensions/ipaddr) | `ipcontains`, `ipfamily`, `iphost`, `ipmasklen`, `ipnetwork` | Parse and inspect IPv4 and IPv6 addresses and CIDR ranges |
+| [Percentile](/extensions/percentile) | `median`, `percentile`, `percentile_cont`, `percentile_disc`, `stddev` | Statistical aggregate functions |
+
+## Using extension functions
+
+Extension functions work like any built-in SQL function. Call them directly in a query:
+
+```sql
+SELECT crypto_sha256('hello');
+SELECT regexp_like('hello world', 'world');
+SELECT ipfamily('192.168.1.1');
+SELECT median(score) FROM results;
+```
+
+The CSV extension uses the virtual table mechanism instead of scalar functions:
+
+```sql
+CREATE VIRTUAL TABLE temp.data USING csv(filename='data.csv', header=yes);
+SELECT * FROM data;
+```
+
+<Note>
+  All extensions listed here are built into the Turso binary and do not require any configuration to use. The `load_extension()` function only works with Turso-native extensions, not external SQLite `.so` or `.dll` files.
+</Note>

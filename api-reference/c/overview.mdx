@@ -1,0 +1,95 @@
+---
+title: "C overview"
+description: "Turso implements a subset of the SQLite C API, plus libSQL extensions."
+---
+
+Turso exposes a C API that is source-compatible with SQLite. Applications written against the SQLite C API can be linked against the Turso shared or static library with minimal changes.
+
+## Header
+
+Turso ships `sqlite3.h`. Include it the same way you would for SQLite:
+
+```c
+#include "sqlite3.h"
+```
+
+## Compilation
+
+Link your application against `libturso` (or `libsqlite3` when using the Turso drop-in replacement build):
+
+```bash
+# Dynamic linking
+gcc myapp.c -o myapp -lturso
+
+# Static linking
+gcc myapp.c -o myapp libturso.a
+```
+
+## Quick example
+
+```c
+#include <stdio.h>
+#include "sqlite3.h"
+
+int main(void) {
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int rc;
+
+    /* Open database */
+    rc = sqlite3_open("app.db", &db);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return 1;
+    }
+
+    /* Create table */
+    rc = sqlite3_prepare_v2(db, "CREATE TABLE IF NOT EXISTS t (x INTEGER)",
+                            -1, &stmt, NULL);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    /* Insert a row */
+    rc = sqlite3_prepare_v2(db, "INSERT INTO t VALUES (?)", -1, &stmt, NULL);
+    sqlite3_bind_int64(stmt, 1, 42);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    /* Query */
+    rc = sqlite3_prepare_v2(db, "SELECT x FROM t", -1, &stmt, NULL);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        printf("%lld\n", sqlite3_column_int64(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+
+    sqlite3_close(db);
+    return 0;
+}
+```
+
+## Return codes
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SQLITE_OK` | 0 | Success |
+| `SQLITE_ERROR` | 1 | Generic error |
+| `SQLITE_BUSY` | 5 | Database file is locked |
+| `SQLITE_ROW` | 100 | `sqlite3_step()` has another row ready |
+| `SQLITE_DONE` | 101 | `sqlite3_step()` has finished executing |
+
+## Pages in this section
+
+<Columns cols={2}>
+  <Card title="Connection" href="/api-reference/c/connection" icon="link">
+    Open, close, and inspect a database connection.
+  </Card>
+  <Card title="Statement" href="/api-reference/c/statement" icon="code">
+    Prepare, step, bind, and read column values.
+  </Card>
+</Columns>
+<Columns cols={2}>
+  <Card title="WAL" href="/api-reference/c/wal" icon="database">
+    libSQL WAL extension functions.
+  </Card>
+</Columns>

@@ -1,0 +1,246 @@
+---
+title: "Statement"
+description: "Prepare, step, bind parameters, and read column values using the SQLite C API."
+---
+
+## `sqlite3_prepare_v2`
+
+Compiles a SQL statement into a bytecode program ready for execution.
+
+```c
+int sqlite3_prepare_v2(
+    sqlite3      *db,
+    const char   *sql,
+    int           len,
+    sqlite3_stmt **out_stmt,
+    const char  **tail
+);
+```
+
+<ParamField path="db" type="sqlite3 *" required>
+  Open database connection.
+</ParamField>
+<ParamField path="sql" type="const char *" required>
+  The SQL statement to compile (UTF-8).
+</ParamField>
+<ParamField path="len" type="int" required>
+  Length of `sql` in bytes, or `-1` to read until the first NUL byte.
+</ParamField>
+<ParamField path="out_stmt" type="sqlite3_stmt **" required>
+  Output pointer that receives the prepared statement handle. Set to `NULL` if the input is an empty or whitespace-only string.
+</ParamField>
+<ParamField path="tail" type="const char **">
+  If not `NULL`, set to the first byte past the end of the first parsed statement. Useful for parsing multiple statements from a single string.
+</ParamField>
+
+**Returns** `SQLITE_OK` on success.
+
+```c
+sqlite3_stmt *stmt;
+rc = sqlite3_prepare_v2(db, "SELECT x FROM t WHERE x > ?", -1, &stmt, NULL);
+if (rc != SQLITE_OK) {
+    fprintf(stderr, "prepare: %s\n", sqlite3_errmsg(db));
+}
+```
+
+## `sqlite3_step`
+
+Evaluates the prepared statement one step. Call repeatedly to iterate through result rows.
+
+```c
+int sqlite3_step(sqlite3_stmt *stmt);
+```
+
+<ParamField path="stmt" type="sqlite3_stmt *" required>
+  A prepared statement.
+</ParamField>
+
+**Returns**
+- `SQLITE_ROW` — a new result row is available; read it with `sqlite3_column_*`.
+- `SQLITE_DONE` — the statement has finished executing successfully.
+- Any other code — an error occurred.
+
+```c
+while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int64_t x = sqlite3_column_int64(stmt, 0);
+    printf("%lld\n", x);
+}
+```
+
+## `sqlite3_finalize`
+
+Destroys a prepared statement and releases all resources. Must be called for every statement created by `sqlite3_prepare_v2`.
+
+```c
+int sqlite3_finalize(sqlite3_stmt *stmt);
+```
+
+<ParamField path="stmt" type="sqlite3_stmt *" required>
+  The statement to destroy. Passing `NULL` is a no-op.
+</ParamField>
+
+**Returns** `SQLITE_OK`, or the error code from the last evaluation if the statement encountered an error.
+
+## Column count and names
+
+### `sqlite3_column_count`
+
+Returns the number of columns in the result set.
+
+```c
+int sqlite3_column_count(sqlite3_stmt *stmt);
+```
+
+**Returns** `int` — number of columns. Returns 0 for statements that do not return rows (e.g. INSERT).
+
+### `sqlite3_column_name`
+
+Returns the name of the column at zero-based index `idx`.
+
+```c
+const char *sqlite3_column_name(sqlite3_stmt *stmt, int idx);
+```
+
+**Returns** `const char *` — UTF-8 column name. Valid until the next call to this function or until the statement is finalized.
+
+### `sqlite3_column_decltype`
+
+Returns the declared type of the column (as written in the CREATE TABLE statement).
+
+```c
+const char *sqlite3_column_decltype(sqlite3_stmt *stmt, int idx);
+```
+
+**Returns** `const char *` or `NULL` if the column is an expression without a declared type.
+
+### `sqlite3_column_type`
+
+Returns the storage class of the value in the current row for column `idx`.
+
+```c
+int sqlite3_column_type(sqlite3_stmt *stmt, int idx);
+```
+
+**Returns** one of: `SQLITE_INTEGER` (1), `SQLITE_FLOAT` (2), `SQLITE_TEXT` (3), `SQLITE_BLOB` (4), `SQLITE_NULL` (5).
+
+## Reading column values
+
+Call these after `sqlite3_step()` returns `SQLITE_ROW`. All functions take a zero-based column index.
+
+### `sqlite3_column_int64`
+
+```c
+int64_t sqlite3_column_int64(sqlite3_stmt *stmt, int idx);
+```
+
+Returns the value as a 64-bit signed integer.
+
+### `sqlite3_column_double`
+
+```c
+double sqlite3_column_double(sqlite3_stmt *stmt, int idx);
+```
+
+Returns the value as a double.
+
+### `sqlite3_column_text`
+
+```c
+const unsigned char *sqlite3_column_text(sqlite3_stmt *stmt, int idx);
+```
+
+Returns the value as a null-terminated UTF-8 string. Valid until the column is next written or the statement is finalized.
+
+### `sqlite3_column_blob`
+
+```c
+const void *sqlite3_column_blob(sqlite3_stmt *stmt, int idx);
+```
+
+Returns a pointer to the raw blob data.
+
+### `sqlite3_column_bytes`
+
+```c
+int sqlite3_column_bytes(sqlite3_stmt *stmt, int idx);
+```
+
+Returns the byte length of the blob or UTF-8 string value (excluding the NUL terminator for text).
+
+## Binding parameters
+
+Bind values to `?` placeholders using 1-based index. Always call `sqlite3_reset()` before rebinding a statement for re-use.
+
+### `sqlite3_bind_int64`
+
+```c
+int sqlite3_bind_int64(sqlite3_stmt *stmt, int idx, int64_t value);
+```
+
+### `sqlite3_bind_double`
+
+```c
+int sqlite3_bind_double(sqlite3_stmt *stmt, int idx, double value);
+```
+
+### `sqlite3_bind_text`
+
+```c
+int sqlite3_bind_text(
+    sqlite3_stmt *stmt,
+    int           idx,
+    const char   *text,
+    int           len,
+    void        (*destructor)(void*)
+);
+```
+
+Pass `SQLITE_STATIC` if the string will outlive the statement, or `SQLITE_TRANSIENT` for Turso to make a copy.
+
+### `sqlite3_bind_blob`
+
+```c
+int sqlite3_bind_blob(
+    sqlite3_stmt *stmt,
+    int           idx,
+    const void   *data,
+    int           len,
+    void        (*destructor)(void*)
+);
+```
+
+### `sqlite3_bind_null`
+
+```c
+int sqlite3_bind_null(sqlite3_stmt *stmt, int idx);
+```
+
+All bind functions return `SQLITE_OK` on success.
+
+## Example: full query lifecycle
+
+```c
+sqlite3_stmt *stmt;
+int rc;
+
+/* Prepare */
+rc = sqlite3_prepare_v2(db, "SELECT id, name FROM users WHERE id > ?", -1, &stmt, NULL);
+if (rc != SQLITE_OK) goto err;
+
+/* Bind */
+sqlite3_bind_int64(stmt, 1, 0);
+
+/* Step */
+while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int64_t     id   = sqlite3_column_int64(stmt, 0);
+    const char *name = (const char *)sqlite3_column_text(stmt, 1);
+    printf("%lld: %s\n", id, name);
+}
+
+/* Finalize */
+sqlite3_finalize(stmt);
+return;
+
+err:
+    fprintf(stderr, "%s\n", sqlite3_errmsg(db));
+```

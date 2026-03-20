@@ -1,0 +1,396 @@
+---
+title: "Go"
+description: "Use Turso Database from Go via the standard database/sql interface with the tursogo driver."
+---
+
+<Warning>
+  Turso Database is currently in BETA. It may contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+</Warning>
+
+The `tursogo` package registers a `"turso"` driver for Go's standard `database/sql` package. It uses [purego](https://github.com/ebitengine/purego) to call the Turso native library from Go without CGO.
+
+## Installation
+
+```bash
+go get turso.tech/database/tursogo
+```
+
+## Connecting to a database
+
+Import the `tursogo` package for its side-effect of registering the `"turso"` driver, then open a connection with `sql.Open()`.
+
+<CodeGroup>
+
+```go file-based database
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", "sqlite.db")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+}
+```
+
+```go in-memory database
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  The driver name is `"turso"`. Use `":memory:"` as the data source name for a transient in-memory database.
+</Tip>
+
+## Executing queries
+
+Use `db.Exec()` for statements that do not return rows and `db.Query()` for SELECT statements.
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    // Create a table
+    _, err = db.Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    // Insert rows
+    _, err = db.Exec(
+        "INSERT INTO users (name, email) VALUES (?, ?)",
+        "Alice", "alice@example.com",
+    )
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    // Query rows
+    rows, err := db.Query("SELECT id, name, email FROM users")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var id int
+        var name, email string
+        if err := rows.Scan(&id, &name, &email); err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+        }
+        fmt.Printf("id=%d name=%s email=%s\n", id, name, email)
+    }
+}
+```
+
+## Prepared statements
+
+Use `db.Prepare()` to compile a SQL statement once and execute it multiple times.
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    _, _ = db.Exec("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
+
+    // Prepare an insert statement
+    insert, err := db.Prepare("INSERT INTO products (name, price) VALUES (?, ?)")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer insert.Close()
+
+    insert.Exec("Widget", 9.99)
+    insert.Exec("Gadget", 19.99)
+
+    // Prepare a select
+    sel, err := db.Prepare("SELECT id, name FROM products WHERE price < ?")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer sel.Close()
+
+    rows, _ := sel.Query(15.0)
+    defer rows.Close()
+
+    for rows.Next() {
+        var id int
+        var name string
+        rows.Scan(&id, &name)
+        fmt.Printf("id=%d name=%s\n", id, name)
+    }
+}
+```
+
+## Parameter binding
+
+Parameters are bound positionally with `?`. Pass values as variadic arguments to `Exec()` or `Query()`:
+
+```go
+// Positional binding
+db.Exec(
+    "INSERT INTO events (type, score) VALUES (?, ?)",
+    "click", 10,
+)
+
+// Named binding is also supported
+rows, _ := db.Query(
+    "SELECT * FROM events WHERE type = :type AND score > :min",
+    sql.Named("type", "click"),
+    sql.Named("min", 5),
+)
+```
+
+## Reading results
+
+Iterate over `*sql.Rows` with `rows.Next()` and use `rows.Scan()` to read values into Go variables.
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    db.Exec("CREATE TABLE logs (id INTEGER, msg TEXT)")
+    db.Exec("INSERT INTO logs VALUES (1, 'start'), (2, 'stop')")
+
+    rows, err := db.Query("SELECT id, msg FROM logs ORDER BY id")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer rows.Close()
+
+    // Inspect column names
+    cols, _ := rows.Columns()
+    fmt.Println("Columns:", cols)
+
+    for rows.Next() {
+        var id int
+        var msg string
+        if err := rows.Scan(&id, &msg); err != nil {
+            fmt.Println(err)
+            os.Exit(1)
+        }
+        fmt.Printf("%d: %s\n", id, msg)
+    }
+
+    // Check for iteration errors
+    if err := rows.Err(); err != nil {
+        fmt.Println(err)
+    }
+}
+```
+
+Use `db.QueryRow()` when you expect exactly one row:
+
+```go
+var count int
+db.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count)
+fmt.Println("Count:", count)
+```
+
+## Transactions
+
+Use `db.Begin()` to start a transaction. Call `Commit()` to persist or `Rollback()` to abort.
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    db.Exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
+    db.Exec("INSERT INTO accounts VALUES (1, 1000), (2, 500)")
+
+    tx, err := db.Begin()
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    _, err = tx.Exec("UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+    if err != nil {
+        tx.Rollback()
+        fmt.Println("Rollback:", err)
+        os.Exit(1)
+    }
+
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + 100 WHERE id = 2")
+    if err != nil {
+        tx.Rollback()
+        fmt.Println("Rollback:", err)
+        os.Exit(1)
+    }
+
+    if err := tx.Commit(); err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    fmt.Println("Transfer complete")
+}
+```
+
+## Error handling
+
+The `tursogo` driver returns standard Go errors. Check `err != nil` after each call. Package-level sentinel errors are also exported:
+
+| Sentinel | Meaning |
+|---|---|
+| `turso.ErrTursoConnClosed` | Operation on a closed connection |
+| `turso.ErrTursoStmtClosed` | Operation on a closed statement |
+| `turso.ErrTursoRowsClosed` | Advancing a closed rows cursor |
+| `turso.ErrTursoTxDone` | Commit or rollback on a finished transaction |
+
+```go
+import turso "turso.tech/database/tursogo"
+
+if err == turso.ErrTursoConnClosed {
+    // reconnect or exit
+}
+```
+
+## Complete example
+
+```go
+package main
+
+import (
+    "database/sql"
+    "fmt"
+    "os"
+
+    _ "turso.tech/database/tursogo"
+)
+
+func main() {
+    db, err := sql.Open("turso", ":memory:")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    _, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS posts (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            body  TEXT
+        )
+    `)
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+
+    insert, _ := db.Prepare("INSERT INTO posts (title, body) VALUES (?, ?)")
+    defer insert.Close()
+
+    insert.Exec("Hello, Turso!", "This is the first post.")
+    insert.Exec("Second post", "More content here.")
+
+    rows, err := db.Query("SELECT id, title FROM posts ORDER BY id")
+    if err != nil {
+        fmt.Println(err)
+        os.Exit(1)
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var id int
+        var title string
+        rows.Scan(&id, &title)
+        fmt.Printf("%d: %s\n", id, title)
+    }
+}
+```

@@ -1,0 +1,89 @@
+---
+title: "Percentile extension"
+description: "Statistical aggregate functions: median, percentile, percentile_cont, percentile_disc, and stddev."
+---
+
+The percentile extension adds statistical aggregate functions to SQL. These functions operate over a group of rows, similar to `avg()` or `sum()`.
+
+## Functions
+
+| Function | Arguments | Returns | Description |
+|----------|-----------|---------|-------------|
+| `median(Y)` | `Y` — numeric column | REAL or NULL | The median (middle value) of all non-NULL values in the group |
+| `percentile(Y, P)` | `Y` — numeric column; `P` — percentile 0–100 | REAL or NULL | The P-th percentile of `Y` using linear interpolation |
+| `percentile_cont(Y, P)` | `Y` — numeric column; `P` — fraction 0.0–1.0 | REAL or NULL | Continuous percentile using linear interpolation; `P` is a fraction |
+| `percentile_disc(Y, P)` | `Y` — numeric column; `P` — percentile 0–100 | REAL or NULL | Discrete percentile; returns the largest value in `Y` at or below the P-th percentile |
+| `stddev(Y)` | `Y` — numeric column | REAL or NULL | Sample standard deviation using Welford's algorithm; returns NULL if fewer than 2 values |
+
+## Difference between percentile variants
+
+- **`percentile(Y, P)`** — `P` is on a 0–100 scale. Uses linear interpolation between adjacent values. This is the most common form.
+- **`percentile_cont(Y, P)`** — `P` is on a 0.0–1.0 scale (fractional). Uses the same linear interpolation as `percentile` but with a different scale.
+- **`percentile_disc(Y, P)`** — `P` is on a 0–100 scale. Returns an actual value from the dataset (the floor of the interpolated position) rather than interpolating between values.
+
+<Note>
+  The `P` argument must be consistent across all rows in a group. Passing different `P` values in the same aggregation group is an error.
+</Note>
+
+## Examples
+
+### Median
+
+```sql
+SELECT median(response_time) FROM requests;
+```
+
+```sql
+SELECT path, median(response_time) AS p50
+FROM requests
+GROUP BY path
+ORDER BY p50 DESC;
+```
+
+### Percentile (0–100 scale)
+
+```sql
+-- 95th percentile response time
+SELECT percentile(response_time, 95) FROM requests;
+```
+
+```sql
+-- Multiple percentiles in one query
+SELECT
+  percentile(response_time, 50)  AS p50,
+  percentile(response_time, 90)  AS p90,
+  percentile(response_time, 99)  AS p99
+FROM requests;
+```
+
+### Percentile continuous (0.0–1.0 scale)
+
+```sql
+-- Equivalent to the 95th percentile
+SELECT percentile_cont(response_time, 0.95) FROM requests;
+```
+
+### Percentile discrete
+
+```sql
+-- Returns an actual value from the dataset
+SELECT percentile_disc(score, 75) FROM exam_results;
+```
+
+### Standard deviation
+
+```sql
+SELECT stddev(price) FROM products;
+```
+
+```sql
+SELECT category, stddev(price) AS price_stddev
+FROM products
+GROUP BY category;
+```
+
+## NULL handling
+
+All functions ignore NULL values during aggregation. If the group is empty (or all values are NULL), the functions return NULL.
+
+`stddev` returns NULL when the group contains fewer than 2 non-NULL values, because sample standard deviation is undefined for a single data point.

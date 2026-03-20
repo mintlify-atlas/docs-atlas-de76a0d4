@@ -1,0 +1,97 @@
+---
+title: "Encryption"
+description: "Enable encryption at rest for Turso databases using the experimental encryption feature."
+---
+
+<Warning>
+Encryption is an experimental feature and is not production ready. Do not use it for critical data.
+</Warning>
+
+Turso supports encryption at rest for database files. When enabled, the database file is encrypted using the specified cipher and key. The encryption feature must be explicitly enabled with a command-line flag.
+
+## Enabling encryption
+
+Pass the `--experimental-encryption` flag when opening a database:
+
+```bash
+tursodb --experimental-encryption database.db
+```
+
+## Generating a key
+
+Generate a secure 32-byte key encoded as a hex string:
+
+```bash
+openssl rand -hex 32
+```
+
+Example output:
+
+```
+2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d
+```
+
+Store this key securely. If you lose it, the database cannot be recovered.
+
+## Setting the cipher and key
+
+After opening a new database with `--experimental-encryption`, set the cipher and key using `PRAGMA` statements before any other operations:
+
+```sql
+PRAGMA cipher = 'aegis256';
+PRAGMA hexkey = '2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d';
+```
+
+### Supported ciphers
+
+| Cipher | Description |
+|--------|-------------|
+| `aegis256` | AEGIS-256 authenticated encryption. Recommended for new databases. |
+| `aes256gcm` | AES-256-GCM authenticated encryption. |
+
+## URI format
+
+You can provide encryption parameters directly in a URI when opening the database. This is also the required format for reopening an already-encrypted database.
+
+```bash
+tursodb --experimental-encryption \
+  "file:database.db?cipher=aegis256&hexkey=2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d"
+```
+
+<Warning>
+To reopen an already-encrypted database, you **must** use the URI format with `cipher` and `hexkey` as URI parameters. Opening the file by path alone without these parameters will fail.
+</Warning>
+
+## Example: creating and reopening an encrypted database
+
+<Steps>
+  <Step title="Generate a key">
+    ```bash
+    openssl rand -hex 32
+    # 2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d
+    ```
+  </Step>
+  <Step title="Create the encrypted database">
+    ```bash
+    tursodb --experimental-encryption database.db
+    ```
+
+    Then in the SQL shell:
+
+    ```sql
+    PRAGMA cipher = 'aegis256';
+    PRAGMA hexkey = '2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d';
+
+    CREATE TABLE secrets (id INTEGER PRIMARY KEY, value TEXT);
+    INSERT INTO secrets VALUES (1, 'top secret');
+    ```
+  </Step>
+  <Step title="Reopen the encrypted database">
+    Use the URI format with cipher and hexkey parameters:
+
+    ```bash
+    tursodb --experimental-encryption \
+      "file:database.db?cipher=aegis256&hexkey=2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d"
+    ```
+  </Step>
+</Steps>

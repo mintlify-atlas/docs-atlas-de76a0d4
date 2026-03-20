@@ -1,0 +1,213 @@
+---
+title: "Data types"
+description: "Storage classes, type affinity, STRICT tables, custom types, and vector types in Turso."
+---
+
+Turso uses SQLite's dynamic type system: values carry their type, but columns do not enforce a single type by default. Every value stored in Turso belongs to one of five storage classes. Type affinity guides how values are coerced when inserted into a column.
+
+## Storage classes
+
+A storage class is the fundamental type of a value as persisted on disk.
+
+| Storage class | Description |
+|---------------|-------------|
+| `NULL` | The null value |
+| `INTEGER` | A signed integer stored in 1, 2, 3, 4, 6, or 8 bytes depending on magnitude |
+| `REAL` | An 8-byte IEEE 754 floating-point number |
+| `TEXT` | A UTF-8 encoded string |
+| `BLOB` | Raw binary data, stored exactly as provided |
+
+Use `typeof()` to inspect the storage class of any value at runtime:
+
+```sql
+SELECT typeof(NULL);       -- 'null'
+SELECT typeof(42);         -- 'integer'
+SELECT typeof(3.14);       -- 'real'
+SELECT typeof('hello');    -- 'text'
+SELECT typeof(x'CAFE');    -- 'blob'
+```
+
+## Type affinity
+
+When you declare a column with a type name, Turso assigns a **type affinity** to that column. Affinity is a preference for how to store values, not a hard constraint (see [STRICT tables](#strict-tables) for enforcement). Turso follows the same affinity rules as SQLite.
+
+### Affinity determination rules
+
+The rules are applied in order. The first rule that matches determines the affinity:
+
+| Rule | Condition | Affinity | Example declared types |
+|------|-----------|----------|------------------------|
+| 1 | Declared type contains `INT` | INTEGER | `INT`, `INTEGER`, `BIGINT`, `SMALLINT`, `TINYINT` |
+| 2 | Declared type contains `CHAR`, `CLOB`, or `TEXT` | TEXT | `TEXT`, `VARCHAR(255)`, `CLOB`, `CHARACTER(20)` |
+| 3 | Declared type contains `BLOB`, or no type is given | BLOB/NONE | `BLOB`, _(no type)_ |
+| 4 | Declared type contains `REAL`, `FLOA`, or `DOUB` | REAL | `REAL`, `FLOAT`, `DOUBLE`, `DOUBLE PRECISION` |
+| 5 | Any other declared type | NUMERIC | `NUMERIC`, `DECIMAL`, `BOOLEAN`, `DATE` |
+
+### Affinity coercion rules
+
+When a value is inserted into a column, Turso attempts to coerce the value toward the column's affinity:
+
+| Affinity | Coercion behaviour |
+|----------|-----------------------|
+| **INTEGER** | TEXT or REAL that looks like a whole number is converted to INTEGER |
+| **REAL** | TEXT that looks like a number is converted to REAL; INTEGER is converted to REAL |
+| **NUMERIC** | Turso tries INTEGER first, then REAL, then stores as TEXT if neither applies |
+| **TEXT** | INTEGER and REAL values are converted to their text representation |
+| **BLOB/NONE** | No conversion is attempted; the value is stored as-is |
+
+```sql
+-- Affinity is a suggestion, not a constraint in non-STRICT tables
+CREATE TABLE t (id INTEGER, name TEXT, data BLOB);
+
+-- All three values are stored with whatever type they naturally have
+INSERT INTO t VALUES ('not a number', 42, 'text in blob column');
+SELECT typeof(id), typeof(name), typeof(data) FROM t;
+-- 'text', 'integer', 'text'
+```
+
+## Boolean values
+
+Turso has no separate boolean storage class. Boolean results are represented as integers: `1` for true and `0` for false. Comparison operators, `IS NULL`, `EXISTS`, and logical operators all return `1` or `0`.
+
+```sql
+SELECT 1 = 1;          -- 1
+SELECT 1 = 2;          -- 0
+SELECT NULL IS NULL;   -- 1
+SELECT 5 > 3 AND 2 < 4; -- 1
+```
+
+A column declared as `BOOLEAN` receives NUMERIC affinity (rule 5 above) and stores `0` or `1` as integers.
+
+## Date and time values
+
+Turso has no dedicated date or time storage class. Date and time values can be stored as any of the following:
+
+| Storage format | Example | Notes |
+|----------------|---------|-------|
+| TEXT | `'2025-03-15 14:30:00'` | ISO 8601 strings; works with all date/time functions |
+| REAL | `2460749.5` | Julian day number |
+| INTEGER | `1741996200` | Unix timestamp (seconds since 1970-01-01 00:00:00 UTC) |
+
+The built-in [date and time functions](/sql-reference/functions/date-time) accept all three formats and can convert between them.
+
+```sql
+SELECT date('now');                        -- '2025-03-15'
+SELECT datetime(1741996200, 'unixepoch'); -- '2025-03-15 14:30:00'
+SELECT julianday('2025-03-15');           -- 2460749.5
+SELECT unixepoch('2025-03-15');           -- 1741996800
+```
+
+## STRICT tables
+
+STRICT tables enforce type checking at the storage layer. Every value inserted must exactly match the declared column type or be losslessly convertible to it.
+
+```sql
+CREATE TABLE users (
+    id   INTEGER PRIMARY KEY,
+    name TEXT    NOT NULL,
+    age  INTEGER,
+    score REAL
+) STRICT;
+
+-- Works — values match declared types
+INSERT INTO users VALUES (1, 'Alice', 30, 95.5);
+
+-- Fails — 'thirty' cannot be converted to INTEGER
+INSERT INTO users VALUES (2, 'Bob', 'thirty', 80.0);
+-- Error: cannot store TEXT value in INTEGER column
+```
+
+STRICT tables accept only these base type names:
+
+| Type | Description |
+|------|-------------|
+| `INTEGER` | Signed integer |
+| `REAL` | Floating-point number |
+| `TEXT` | UTF-8 string |
+| `BLOB` | Raw binary data |
+| `ANY` | Any storage class (disables type checking for that column) |
+
+<Note>
+STRICT table support is experimental in Turso.
+</Note>
+
+## Vector types
+
+Turso stores vectors as `BLOB` values using the vector extension. There is no separate vector storage class — vectors are encoded into binary blobs by the vector constructor functions and decoded transparently by vector functions.
+
+| Vector type | Constructor | Element width | Description |
+|-------------|-------------|---------------|-------------|
+| `vector32` | `vector32(blob)` | 4 bytes (F32) | 32-bit floating-point vector |
+| `vector64` | `vector64(blob)` | 8 bytes (F64) | 64-bit floating-point vector |
+| `vector8` | `vector8(blob)` | 1 byte (I8) | 8-bit integer (quantized) vector |
+| `vector1bit` | `vector1bit(blob)` | 1 bit | Binary vector for Hamming distance |
+
+```sql
+-- Store a 3-element F32 vector
+CREATE TABLE embeddings (
+    id        INTEGER PRIMARY KEY,
+    embedding BLOB
+);
+
+INSERT INTO embeddings VALUES
+    (1, vector32('[0.1, 0.2, 0.3]')),
+    (2, vector32('[0.4, 0.5, 0.6]'));
+
+-- Compute cosine distance between two vectors
+SELECT vector_distance_cos(
+    (SELECT embedding FROM embeddings WHERE id = 1),
+    (SELECT embedding FROM embeddings WHERE id = 2)
+);
+```
+
+See [Vector Functions](/sql-reference/functions/vector) for the full API.
+
+## Comparison and sort order
+
+When values of different storage classes are compared, Turso uses the SQLite ordering:
+
+```
+NULL < INTEGER/REAL < TEXT < BLOB
+```
+
+- `NULL` is less than any non-NULL value
+- `INTEGER` and `REAL` values are compared numerically (a REAL `1.0` equals INTEGER `1`)
+- `TEXT` values are compared using the column's collation (default: `BINARY`)
+- `BLOB` values are compared byte-by-byte with `memcmp()`
+
+```sql
+SELECT 1 < 2;           -- 1
+SELECT 1.0 = 1;         -- 1  (REAL and INTEGER compared numerically)
+SELECT 'abc' < 'abd';   -- 1
+SELECT 1 < '2';         -- 1  (numeric < text in cross-class ordering)
+SELECT NULL < 1;        -- NULL  (any comparison involving NULL returns NULL)
+SELECT NULL IS NULL;    -- 1  (use IS to test for NULL)
+```
+
+## Type coercion examples
+
+```sql
+-- CAST converts values explicitly
+SELECT CAST('42' AS INTEGER);    -- 42
+SELECT CAST(3.9 AS INTEGER);     -- 3  (truncates toward zero)
+SELECT CAST(42 AS TEXT);         -- '42'
+SELECT CAST('abc' AS INTEGER);   -- 0  (non-numeric text becomes 0)
+SELECT CAST(NULL AS INTEGER);    -- NULL
+
+-- NUMERIC affinity coercion
+CREATE TABLE nums (val NUMERIC);
+INSERT INTO nums VALUES ('42');   -- stored as INTEGER 42
+INSERT INTO nums VALUES ('3.14'); -- stored as REAL 3.14
+INSERT INTO nums VALUES ('abc');  -- stored as TEXT 'abc'
+SELECT val, typeof(val) FROM nums;
+-- 42     integer
+-- 3.14   real
+-- abc    text
+```
+
+## See also
+
+- [Expressions](/sql-reference/expressions) — `CAST` expressions and type conversions
+- [CREATE TABLE](/sql-reference/statements/create-table) — column definitions, constraints, and STRICT mode
+- [Vector Functions](/sql-reference/functions/vector) — vector storage, distances, and similarity search
+- [Date and time functions](/sql-reference/functions/date-time) — working with dates stored as TEXT, REAL, or INTEGER

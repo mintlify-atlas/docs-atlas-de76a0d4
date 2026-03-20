@@ -1,0 +1,330 @@
+---
+title: "Shell Commands"
+description: "Dot commands available inside the tursodb interactive shell."
+---
+
+Dot commands are special instructions that start with a `.` and control the shell itself rather than querying the database. They do not require a trailing semicolon.
+
+## Quick reference
+
+| Command | Description |
+|---------|-------------|
+| `.help` | Show the help message listing all available commands. |
+| `.quit` | Exit the shell. |
+| `.exit [CODE]` | Exit the shell with an optional return code. |
+| `.open FILENAME [VFS]` | Open (or create) a database file. |
+| `.schema [TABLE]` | Display the `CREATE` statement for a table or for all objects. |
+| `.dump` | Dump the entire database as SQL statements. |
+| `.tables [PATTERN]` | List tables, optionally filtered by a glob pattern. |
+| `.databases` | List attached databases. |
+| `.mode MODE` | Set the output mode (`pretty`, `list`, or `line`). |
+| `.output [FILE]` | Redirect output to a file, or back to stdout if no argument. |
+| `.headers on\|off` | Show or hide column headers in `list` mode. |
+| `.nullvalue VALUE` | String to display in place of `NULL` in `list` mode. |
+| `.echo on\|off` | Print each command before executing it. |
+| `.show` | Print the current values of all shell settings. |
+| `.import [--csv] FILE TABLE` | Import data from a CSV file into a table. |
+| `.load PATH` | Load a compiled extension library (`.so` / `.dylib` / `.dll`). |
+| `.indexes [TABLE]` | List indexes, optionally for a specific table. |
+| `.stats [on\|off] [-r]` | Display or toggle execution statistics. `-r` resets after display. |
+| `.timer on\|off` | Toggle query execution timing. |
+| `.vfslist` | List available VFS modules. |
+| `.cd DIRECTORY` | Change the shell working directory. |
+| `.opcodes [NAME]` | Show VDBE opcode descriptions, optionally filtered by name. |
+| `.clone OUTPUT_FILE` | Clone the open database to another file. |
+| `.read FILE` | Execute SQL statements from a file. |
+| `.parameter set\|list\|clear` | Manage named SQL parameter bindings. |
+| `.manual [PAGE]` | Display built-in manual pages. `.man` with no argument lists all pages. |
+| `.dbtotxt [--page N]` | Print raw database page contents as text. |
+
+## Database and file management
+
+### `.open FILENAME [VFS]`
+
+Open or create a database file. If the file does not exist it is created.
+
+```console
+turso> .open employees.db
+turso> .open employees.db memory
+```
+
+Use `.open :memory:` to switch to an in-memory database within the same session.
+
+### `.clone OUTPUT_FILE`
+
+Clone the currently open database to a new file without closing it.
+
+```console
+turso> .clone backup.db
+```
+
+### `.read FILE`
+
+Execute all SQL statements from a file.
+
+```console
+turso> .read migrations/001_create_tables.sql
+```
+
+## Schema inspection
+
+### `.schema [TABLE]`
+
+Display the `CREATE` statement for a table. Without an argument, shows all objects.
+
+```console
+turso> .schema users
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT);
+turso> .schema
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT);
+CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INT, body TEXT);
+```
+
+### `.tables [PATTERN]`
+
+List all tables. An optional glob pattern filters the results.
+
+```console
+turso> .tables
+users   posts   comments
+turso> .tables us%
+users
+```
+
+### `.indexes [TABLE]`
+
+List all indexes in the database. With a table name, shows only indexes for that table.
+
+```console
+turso> .indexes
+turso> .indexes users
+```
+
+### `.databases`
+
+List all attached databases.
+
+```console
+turso> .databases
+main: employees.db
+```
+
+## Data export
+
+### `.dump`
+
+Dump the entire database as a sequence of SQL statements. Useful for backups or migrating data.
+
+```console
+turso> .dump
+BEGIN TRANSACTION;
+CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT);
+INSERT INTO users VALUES(1,'Alice','alice@example.com');
+INSERT INTO users VALUES(2,'Bob','bob@example.com');
+COMMIT;
+```
+
+## Data import
+
+### `.import [--csv] FILE TABLE`
+
+Import data from a file into a table. Use `--csv` for CSV files.
+
+```console
+turso> .import --csv data/users.csv users
+```
+
+## Output mode
+
+### `.mode MODE`
+
+Change how query results are displayed. Available modes:
+
+| Mode | Description |
+|------|-------------|
+| `pretty` | Bordered table with aligned columns (default). |
+| `list` | Pipe-separated values, matching SQLite's default format. |
+| `line` | One column per line in `name = value` format. |
+
+```console
+turso> .mode list
+turso> SELECT * FROM users;
+1|Alice|alice@example.com
+2|Bob|bob@example.com
+turso> .mode pretty
+turso> SELECT * FROM users;
+┌────┬───────┬───────────────────┐
+│ id │ name  │ email             │
+├────┼───────┼───────────────────┤
+│ 1  │ Alice │ alice@example.com │
+├────┼───────┼───────────────────┤
+│ 2  │ Bob   │ bob@example.com   │
+└────┴───────┴───────────────────┘
+```
+
+### `.headers on|off`
+
+Toggle column headers in `list` mode.
+
+```console
+turso> .mode list
+turso> .headers on
+turso> SELECT * FROM users;
+id|name|email
+1|Alice|alice@example.com
+```
+
+### `.nullvalue VALUE`
+
+Set the string printed in place of `NULL` in `list` mode.
+
+```console
+turso> .nullvalue NULL
+turso> SELECT NULL;
+NULL
+```
+
+### `.output [FILE]`
+
+Redirect query output to a file. Call `.output` with no argument to restore stdout.
+
+```console
+turso> .output results.txt
+turso> SELECT * FROM users;
+turso> .output
+```
+
+## Shell settings
+
+### `.show`
+
+Print the current values of all shell settings.
+
+```console
+turso> .show
+Settings:
+Output mode: pretty
+DB: employees.db
+Output: STDOUT
+Null value:
+CWD: /home/user/project
+Echo: off
+Headers: off
+```
+
+### `.echo on|off`
+
+Print each command to stdout before executing it.
+
+```console
+turso> .echo on
+turso> SELECT 1;
+SELECT 1;
+1
+```
+
+### `.timer on|off`
+
+Toggle timing output after each statement.
+
+```console
+turso> .timer on
+turso> SELECT count(*) FROM users;
+42
+Run Time: 0.001s
+```
+
+### `.stats [on|off] [-r]`
+
+Display execution statistics. Pass `on` or `off` to enable automatic stats after every query. The `-r` flag resets counters after displaying them.
+
+### `.cd DIRECTORY`
+
+Change the shell's current working directory.
+
+```console
+turso> .cd /tmp
+```
+
+## Extensions and VFS
+
+### `.load PATH`
+
+Load a compiled extension shared library.
+
+```console
+turso> .load /target/debug/liblimbo_regexp
+```
+
+### `.vfslist`
+
+List all available VFS (Virtual File System) modules.
+
+```console
+turso> .vfslist
+syscall
+memory
+```
+
+## Parameter bindings
+
+### `.parameter set|list|clear`
+
+Manage named SQL parameter bindings for use in subsequent queries.
+
+```console
+turso> .parameter set :name alice
+turso> SELECT * FROM users WHERE name = :name;
+┌────┬───────┬───────────────────┐
+│ id │ name  │ email             │
+├────┼───────┼───────────────────┤
+│ 1  │ Alice │ alice@example.com │
+└────┴───────┴───────────────────┘
+turso> .parameter list
+:name = alice
+turso> .parameter clear :name
+turso> .parameter clear
+```
+
+Accepted parameter name styles: `:name`, `@name`, `$name`, `?1`.
+
+## Diagnostics
+
+### `.opcodes [NAME]`
+
+Show VDBE bytecode opcode descriptions. With no argument, lists all opcodes.
+
+```console
+turso> .opcodes Goto
+Goto: Jump to instruction P2.
+```
+
+### `.dbtotxt [--page N]`
+
+Print raw database page contents as text. Use `--page N` to inspect a specific page number.
+
+```console
+turso> .dbtotxt --page 1
+```
+
+## Built-in manual
+
+### `.manual [PAGE]`
+
+Display built-in manual pages for specific features. Without an argument (or with `.man`), lists all available pages.
+
+```console
+turso> .manual mcp
+turso> .man
+```
+
+## Exiting the shell
+
+Use `.quit` or `.exit` to leave the shell. `.exit CODE` exits with a specific return code.
+
+```console
+turso> .quit
+turso> .exit 1
+```
+
+You can also press `Ctrl-D` (EOF) to exit, or press `Ctrl-C` twice to force quit.

@@ -1,0 +1,95 @@
+---
+title: "Journal Modes"
+description: "Switch between WAL and MVCC journal modes to control transaction concurrency in Turso."
+---
+
+Journal modes control how Turso handles transaction logging and durability. You can switch between modes at runtime using the `PRAGMA journal_mode` statement.
+
+## Supported modes
+
+| Mode | Description | Status |
+|------|-------------|--------|
+| `wal` | Write-Ahead Logging. The default mode for new databases. Provides good concurrency for readers and writers. | Stable |
+| `mvcc` | Multi-Version Concurrency Control. Enables [concurrent transactions](/features/transactions#concurrent-transactions-mvcc-only) with snapshot isolation. | Experimental |
+
+<Warning>
+MVCC mode is experimental and not production ready. Do not use it for critical data. See [MVCC limitations](#mvcc-limitations) below.
+</Warning>
+
+## WAL mode
+
+WAL mode is the default for all new Turso databases. In WAL mode:
+
+- Readers do not block writers and writers do not block readers.
+- A single write transaction is allowed at a time. Concurrent writes fail with `SQLITE_BUSY`.
+- Transactions use deferred or immediate locking (see [Transactions](/features/transactions)).
+
+Legacy SQLite databases are automatically converted to WAL mode when opened by Turso.
+
+## MVCC mode
+
+MVCC mode enables concurrent transactions with snapshot isolation. Multiple transactions can read and write simultaneously. Write-write conflicts are detected at commit time rather than at lock acquisition time.
+
+In MVCC mode, use `BEGIN CONCURRENT` to take advantage of optimistic concurrency. See [Concurrent transactions](/features/transactions#concurrent-transactions-mvcc-only) for full details.
+
+## Querying the current mode
+
+```sql
+PRAGMA journal_mode;
+```
+
+```console
+turso> PRAGMA journal_mode;
+┌──────────────┐
+│ journal_mode │
+├──────────────┤
+│ wal          │
+└──────────────┘
+```
+
+## Switching modes
+
+**Switch to WAL mode:**
+
+```sql
+PRAGMA journal_mode = wal;
+```
+
+**Switch to MVCC mode:**
+
+```sql
+PRAGMA journal_mode = mvcc;
+```
+
+```console
+turso> PRAGMA journal_mode = mvcc;
+┌──────────────┐
+│ journal_mode │
+├──────────────┤
+│ mvcc         │
+└──────────────┘
+```
+
+### Checkpoint behavior on mode switch
+
+Switching journal modes triggers a checkpoint to ensure all pending changes are persisted before the mode change takes effect. When switching from MVCC back to WAL mode, the MVCC log file is cleared after checkpointing.
+
+<Note>
+If a database is written to using MVCC mode and then opened again without MVCC, the changes are not visible unless the database was first checkpointed.
+</Note>
+
+## Legacy modes
+
+The legacy SQLite journal modes (`delete`, `truncate`, `persist`, `memory`, `off`) are recognized by the parser but not supported. Attempting to switch to any of these modes returns an error.
+
+## MVCC limitations
+
+The MVCC implementation is experimental and has the following known limitations:
+
+- Indexes cannot be created, and databases with indexes cannot be used in MVCC mode.
+- All data is eagerly loaded from disk to memory on first access. Large databases may take a long time to start and will consume significant memory.
+- Only `PRAGMA wal_checkpoint(TRUNCATE)` is supported, and it blocks both readers and writers.
+- `AUTOINCREMENT` is not supported. Tables with `AUTOINCREMENT` cannot be created or inserted into while MVCC is enabled.
+- Many features may not work, may work incorrectly, or may cause a panic.
+- Queries may return incorrect results.
+- Changes written using MVCC mode are not visible when the database is reopened without MVCC, unless the database was checkpointed first.

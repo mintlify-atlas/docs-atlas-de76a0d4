@@ -1,0 +1,222 @@
+---
+title: "Storage"
+description: "Turso's SQLite-compatible on-disk storage format: B-trees, pages, cells, the pager, WAL, and checkpointing."
+---
+
+Turso reads and writes data using a storage format fully compatible with SQLite's on-disk format. This means `.db` files created by Turso can be opened by SQLite and vice versa (excluding Turso-specific features like encryption or MVCC journal mode).
+
+The main source files are:
+
+| File | Purpose |
+|------|---------|
+| `core/storage/btree.rs` | B-tree operations (~10k LOC) |
+| `core/storage/pager.rs` | Page management, dirty tracking, transactions |
+| `core/storage/wal.rs` | Write-ahead log: frames, read marks, checkpointing |
+| `core/storage/buffer_pool.rs` | In-memory page cache |
+| `core/storage/sqlite3_ondisk.rs` | On-disk format constants and structures |
+| `core/storage/database.rs` | Main database file handle |
+| `core/storage/page_cache.rs` | Per-connection page cache |
+
+## Database file structure
+
+A Turso database file is a sequence of fixed-size pages:
+
+```
+┌─────────────────────────────┐
+│ Page 1: Header + Schema     │  ← First 100 bytes = DB header
+├─────────────────────────────┤
+│ Page 2..N: B-tree pages     │  ← Tables and indexes
+│            Overflow pages   │  ← Large payloads
+│            Freelist pages   │  ← Unused/recycled pages
+└─────────────────────────────┘
+```
+
+Page size is a power of two between 512 and 65,536 bytes. The default is 4,096 bytes.
+
+## Database header
+
+The first 100 bytes of page 1 are the database header:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 16 | Magic: `"SQLite format 3\0"` |
+| 16 | 2 | Page size (big-endian) |
+| 18 | 1 | Write format version (1=rollback, 2=WAL) |
+| 19 | 1 | Read format version |
+| 24 | 4 | Change counter |
+| 28 | 4 | Database size in pages |
+| 32 | 4 | First freelist trunk page |
+| 36 | 4 | Total freelist pages |
+| 40 | 4 | Schema cookie |
+| 56 | 4 | Text encoding (1=UTF-8, 2=UTF-16LE, 3=UTF-16BE) |
+
+All multi-byte integers in the header are **big-endian**.
+
+## Page types
+
+| Flag byte | Type | Purpose |
+|-----------|------|---------|
+| `0x02` | Interior index | Index B-tree internal node |
+| `0x05` | Interior table | Table B-tree internal node |
+| `0x0a` | Leaf index | Index B-tree leaf |
+| `0x0d` | Leaf table | Table B-tree leaf |
+| — | Overflow | Payload that exceeds a page's cell capacity |
+| — | Freelist | Unused pages (trunk or leaf) |
+
+## B-tree structure
+
+Turso uses two B-tree variants, as SQLite does:
+
+- **Table B-tree** — keyed by 64-bit integer rowid; stores row payload in leaf cells.
+- **Index B-tree** — keyed by arbitrary column values plus rowid; used for secondary indexes.
+
+```
+Interior page:  [ptr0] key1 [ptr1] key2 [ptr2] ...
+                   │         │         │
+                   ▼         ▼         ▼
+               child     child     child
+               pages     pages     pages
+
+Leaf page:     key1:data  key2:data  key3:data  ...
+```
+
+Page 1 is always the root of the `sqlite_schema` table, which records all tables, indexes, views, and triggers.
+
+## Cell format
+
+Each row in a B-tree is stored as a **cell**:
+
+```
+# Table leaf cell:
+[payload_size: varint] [rowid: varint] [payload] [overflow_ptr: u32?]
+
+# Table interior cell:
+[left_child_page: u32] [rowid: varint]
+
+# Index cells:
+[payload_size: varint] [key_payload] [overflow_ptr: u32?]
+```
+
+## Record format (payload)
+
+Payloads use SQLite's compact record format:
+
+```
+[header_size: varint] [type1: varint] [type2: varint] ... [data1] [data2] ...
+```
+
+Serial type codes:
+
+| Type | Meaning |
+|------|---------|
+| 0 | NULL |
+| 1–4 | 1/2/3/4-byte signed integer |
+| 5 | 6-byte signed integer |
+| 6 | 8-byte signed integer |
+| 7 | IEEE 754 double-precision float |
+| 8 | Integer constant 0 |
+| 9 | Integer constant 1 |
+| ≥12 (even) | BLOB, length = (N−12)/2 |
+| ≥13 (odd) | Text, length = (N−13)/2 |
+
+## Overflow pages
+
+When a row's payload exceeds the threshold that fits within a single page's cells, the excess is stored in a chain of overflow pages:
+
+```
+[next_page: u32] [data...]
+```
+
+The last overflow page has `next_page = 0`.
+
+## Freelist
+
+Freed pages are tracked in a linked list of freelist trunk pages:
+
+```
+Trunk: [next_trunk: u32] [leaf_count: u32] [leaf_pages: u32...]
+```
+
+When new pages are needed, they are taken from the freelist before extending the file.
+
+## The pager
+
+The `Pager` (`core/storage/pager.rs`) sits between the B-tree layer and the WAL/file layer. It is responsible for:
+
+- **Page caching** — keeping recently accessed pages in memory via a `BufferPool`.
+- **Dirty page tracking** — recording which pages have been modified by the current transaction.
+- **Transaction management** — coordinating `BEGIN`, `COMMIT`, and `ROLLBACK`.
+- **Savepoints** — nested transaction support.
+
+Each `Connection` has its own `Pager` instance. The underlying `WalFileShared` and `BufferPool` are shared across connections.
+
+## Write-Ahead Log (WAL)
+
+Turso uses WAL mode exclusively. Files on disk:
+
+- `database.db` — main database file (stable pages)
+- `database.db-wal` — WAL file (recent writes)
+
+<Note>
+Turso does not use a `.db-shm` shared-memory file. Instead, it maintains the WAL index in process memory (`frame_cache` hashmap and atomic read marks), because multi-process access is not supported.
+</Note>
+
+### Write path
+
+When a transaction commits:
+
+1. The writer appends page frames (page number + page data) to the WAL file sequentially.
+2. A COMMIT frame with a non-zero `db_size` field marks the end of the transaction.
+3. The original `.db` file is not modified until a checkpoint.
+
+### Read path
+
+1. A reader acquires a **read mark** — the frame index of the last valid commit at the time it started.
+2. For each page read, Turso checks the WAL up to the read mark first; if the page is found there, it is returned. Otherwise it falls back to the main `.db` file.
+3. Each reader sees a consistent snapshot at its read mark — later commits are invisible.
+
+### Checkpointing
+
+Checkpointing transfers committed WAL frames back into the main `.db` file:
+
+```
+WAL grows → checkpoint triggered (default: 1000 pages)
+          → WAL frames copied to .db
+          → WAL reused from beginning
+```
+
+Checkpoint modes:
+
+| Mode | Behavior |
+|------|----------|
+| `PASSIVE` | Non-blocking; stops at pages still needed by active readers |
+| `FULL` | Waits for all readers; checkpoints everything |
+| `RESTART` | Like `FULL`; also resets WAL write position to the beginning |
+| `TRUNCATE` | Like `RESTART`; also truncates the WAL file to zero length |
+
+### Concurrency
+
+- One writer at a time (exclusive write lock).
+- Multiple readers never block the writer; the writer never blocks readers.
+- A checkpoint must not overwrite pages still needed by an active reader's read mark.
+
+### Recovery
+
+On startup after a crash:
+
+1. The first connection acquires an exclusive lock.
+2. It scans the WAL for valid committed frames and replays them.
+3. The lock is released and normal operation resumes.
+
+## Debugging storage
+
+```bash
+# Check database integrity
+cargo run --bin tursodb test.db "PRAGMA integrity_check;"
+
+# Page count
+cargo run --bin tursodb test.db "PRAGMA page_count;"
+
+# Freelist statistics
+cargo run --bin tursodb test.db "PRAGMA freelist_count;"
+```

@@ -1,0 +1,168 @@
+---
+title: "Connection"
+description: "Open a Turso database and manage its transaction state."
+---
+
+A `Connection` is the primary object in the `turso` package. Obtain one by calling `turso.connect()`.
+
+## `turso.connect(database, **options)`
+
+Opens a Turso (SQLite-compatible) database and returns a `Connection`.
+
+```python
+import turso
+
+conn = turso.connect("app.db")
+conn = turso.connect(":memory:")
+```
+
+<ParamField path="database" type="str" required>
+  Path to the database file, or `":memory:"` for an in-memory database. The file is created if it does not exist.
+</ParamField>
+<ParamField path="isolation_level" type="str | None" default="DEFERRED">
+  Default transaction mode used for implicit transactions. Accepted values: `"DEFERRED"`, `"IMMEDIATE"`, `"EXCLUSIVE"`, or `None` (autocommit-like behavior without automatic `BEGIN`).
+</ParamField>
+<ParamField path="experimental_features" type="str | None">
+  Comma-separated list of experimental features to enable, e.g. `"views,encryption"`.
+</ParamField>
+<ParamField path="vfs" type="str | None">
+  VFS backend override. Available: `"memory"`, `"syscall"`, `"io_uring"` (Linux only).
+</ParamField>
+<ParamField path="encryption" type="EncryptionOpts | None">
+  Encryption configuration. Requires `"encryption"` in `experimental_features`.
+
+  <Expandable title="EncryptionOpts fields">
+    <ResponseField name="cipher" type="str" required>
+      Cipher name, e.g. `"aegis256"` or `"aes256gcm"`.
+    </ResponseField>
+    <ResponseField name="hexkey" type="str" required>
+      Hex-encoded encryption key (64 hex characters for a 32-byte key).
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `Connection`
+
+## `connection.cursor(factory?)`
+
+Creates and returns a new `Cursor` object.
+
+```python
+cur = conn.cursor()
+```
+
+<ParamField path="factory" type="callable | None">
+  Optional callable that takes a `Connection` and returns a `Cursor` subclass. Defaults to the built-in `Cursor`.
+</ParamField>
+
+**Returns** `Cursor` — see [Cursor](/api-reference/python/cursor) for the full method list.
+
+## `connection.execute(sql, parameters?)`
+
+Shortcut that creates a cursor, calls `cursor.execute(sql, parameters)`, and returns the cursor.
+
+```python
+cursor = conn.execute("SELECT * FROM users WHERE id = ?", (1,))
+```
+
+<ParamField path="sql" type="str" required>
+  SQL statement to execute.
+</ParamField>
+<ParamField path="parameters" type="Sequence | Mapping" default="()">
+  Bind parameters.
+</ParamField>
+
+**Returns** `Cursor`
+
+## `connection.executemany(sql, seq_of_parameters)`
+
+Shortcut that creates a cursor and calls `cursor.executemany(sql, seq_of_parameters)`.
+
+<ParamField path="sql" type="str" required>
+  A DML statement (INSERT, UPDATE, DELETE, or REPLACE).
+</ParamField>
+<ParamField path="seq_of_parameters" type="Iterable[Sequence]" required>
+  An iterable of parameter sequences, one per execution.
+</ParamField>
+
+**Returns** `Cursor`
+
+## `connection.executescript(sql_script)`
+
+Shortcut that creates a cursor and calls `cursor.executescript(sql_script)`.
+
+<ParamField path="sql_script" type="str" required>
+  A string of one or more semicolon-separated SQL statements.
+</ParamField>
+
+**Returns** `Cursor`
+
+## `connection.commit()`
+
+Commits the current transaction. If `isolation_level` is not `None`, a new transaction is begun automatically after the commit to maintain DB-API 2.0 semantics.
+
+```python
+conn.execute("INSERT INTO users (name) VALUES (?)", ("Alice",))
+conn.commit()
+```
+
+## `connection.rollback()`
+
+Rolls back the current transaction. Any changes made since the last `commit()` or `rollback()` are discarded.
+
+```python
+try:
+    conn.execute("INSERT INTO users (name) VALUES (?)", ("Bob",))
+    # something goes wrong
+    raise RuntimeError("oops")
+except RuntimeError:
+    conn.rollback()
+```
+
+## `connection.close()`
+
+Closes the connection. If `autocommit` is `False` and a transaction is open, it is implicitly rolled back.
+
+```python
+conn.close()
+```
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `connection.in_transaction` | `bool` | `True` when a transaction is currently open. |
+| `connection.isolation_level` | `str \| None` | Current isolation level setting. |
+| `connection.autocommit` | `bool \| "LEGACY"` | Autocommit mode. Set to `True`, `False`, or `"LEGACY"` (default). |
+| `connection.row_factory` | `callable \| None` | Optional factory called with `(cursor, row)` to produce custom row objects. |
+| `connection.text_factory` | `callable` | Callable used to decode text values. Defaults to `str`. |
+
+## Context manager
+
+`Connection` implements the context manager protocol:
+
+```python
+with turso.connect("app.db") as conn:
+    conn.execute("INSERT INTO users (name) VALUES (?)", ("Alice",))
+# Commits on success, rolls back on exception
+```
+
+## Exception hierarchy
+
+Turso follows the DB-API 2.0 exception hierarchy:
+
+```
+Exception
+└─ Warning
+└─ Error
+   ├─ InterfaceError
+   └─ DatabaseError
+      ├─ DataError
+      ├─ OperationalError
+      ├─ IntegrityError
+      ├─ InternalError
+      ├─ ProgrammingError
+      └─ NotSupportedError
+```
+
+All exception classes are also accessible as attributes of the `Connection` object (e.g. `conn.IntegrityError`).
