@@ -97,7 +97,7 @@ db.close();
 
 **Returns** `this`
 
-## `db.last_insert_rowid()`
+## `db.lastInsertRowid()`
 
 Returns the `rowid` of the row most recently inserted by this connection.
 
@@ -109,11 +109,38 @@ Returns the number of rows modified by the most recent INSERT, UPDATE, or DELETE
 
 **Returns** `number`
 
-## `db.total_changes()`
+## `db.totalChanges()`
 
 Returns the total number of rows modified since the connection was opened.
 
 **Returns** `number`
+
+## `db.transaction(fn)`
+
+Wraps a function in a transaction. Returns a new function that, when called, executes the original function within a SQLite transaction.
+
+<ParamField path="fn" type="function" required>
+  The function to wrap. It receives the same arguments as the returned function.
+</ParamField>
+
+The returned function also has `.deferred`, `.immediate`, and `.exclusive` properties for controlling the transaction mode.
+
+```javascript
+import { Database } from '@tursodatabase/database';
+
+const db = new Database('app.db');
+db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+
+const insert = db.transaction((name) => {
+  db.prepare('INSERT INTO users (name) VALUES (?)').run(name);
+});
+
+// Runs in a DEFERRED transaction
+insert('Alice');
+
+// Runs in an IMMEDIATE transaction
+insert.immediate('Bob');
+```
 
 ## `db.defaultSafeIntegers(toggle?)`
 
@@ -143,7 +170,6 @@ The following methods from the `better-sqlite3` API are **not yet implemented**:
 
 | Method | Status |
 |---|---|
-| `db.transaction(fn)` | Not supported |
 | `db.pragma(string, options?)` | Not supported |
 | `db.backup(destination, options?)` | Not supported |
 | `db.serialize(options?)` | Not supported |

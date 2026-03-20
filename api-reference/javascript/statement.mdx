@@ -162,6 +162,22 @@ Integer columns wider than 53 bits are returned as `number` by default, which ma
 
 Blob columns are returned as `Buffer` in Node.js and as `Uint8Array` in browser/WASM environments.
 
+## `stmt.bind(...bindParameters)`
+
+Permanently binds parameters to the statement. After calling `bind()`, the statement can be executed without passing parameters each time.
+
+<ParamField path="bindParameters" type="...any">
+  Parameters to permanently bind to the statement. Uses the same format as other execution methods.
+</ParamField>
+
+**Returns** `this` — for chaining.
+
+```javascript
+const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+stmt.bind(1);
+const user = stmt.get(); // no need to pass params again
+```
+
 ## Unsupported methods
 
 <Note>
@@ -172,4 +188,3 @@ Blob columns are returned as `Buffer` in Node.js and as `Uint8Array` in browser/
 |---|---|
 | `stmt.expand(toggle?)` | Not supported |
 | `stmt.timed(toggle?)` | Not supported |
-| `stmt.bind(...bindParameters)` | Not supported |

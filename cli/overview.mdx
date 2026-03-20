@@ -93,13 +93,21 @@ turso> .quit
 |--------|-------|-------------|
 | `DATABASE` | — | Path to the SQLite database file. Defaults to an in-memory database (`:memory:`). |
 | `SQL` | — | Optional SQL statement to execute non-interactively, then exit. |
-| `--output-mode <mode>` | `-m` | Output format. `pretty` (default) renders a bordered table; `list` produces pipe-separated rows compatible with SQLite's default output; `line` prints one column per line. |
+| `--output-mode <mode>` | `-m` | Output format. `pretty` (default) renders a bordered table; `list` produces pipe-separated rows; `line` prints one column per line. |
+| `--output <file>` | `-o` | Write output to a file instead of stdout. |
 | `--quiet` | `-q` | Suppress the startup banner. |
 | `--echo` | `-e` | Print each command before executing it. |
+| `--vfs <name>` | `-v` | Select the VFS backend. Options: `syscall` (default), `memory`, `io_uring` (Linux only, if feature enabled). |
 | `--readonly` | — | Open the database in read-only mode. Writes are rejected. |
 | `--mcp` | — | Start an [MCP server](/cli/mcp-server) instead of the interactive shell. |
+| `--sync-server <addr>` | — | Start a sync server listening at the given address (e.g. `0.0.0.0:8080`) instead of the interactive shell. |
 | `--experimental-encryption` | — | Enable encryption at rest (experimental — do not use with critical data). |
 | `--experimental-views` | — | Enable the experimental views feature (not production-ready). |
+| `--experimental-custom-types` | — | Enable `CREATE TYPE` / `DROP TYPE` custom type definitions (experimental). |
+| `--experimental-index-method` | — | Enable the experimental custom index method feature. |
+| `--experimental-autovacuum` | — | Enable the experimental autovacuum feature. |
+| `--experimental-attach` | — | Enable the experimental `ATTACH DATABASE` feature. |
+| `--tracing-output <file>` | `-t` | Write log traces to the specified file. |
 | `--help` | `-h` | Print help and exit. |
 | `--version` | `-V` | Print the version number and exit. |
 
